@@ -91,7 +91,7 @@ public sealed class TrackMetadata
             var remove = now.Values[key].Split('\n', StringSplitOptions.RemoveEmptyEntries).Except(desired).Select(Plex.E).ToArray();
             if (remove.Length > 0) args.Add(Plex.E(key + "[].tag.tag-") + "=" + Plex.E(string.Join(",", remove)));
             int i = 0;
-            foreach (var tag in desired.Except(now.Values[key].Split('\n'))) args.Add(Plex.E($"{key}[{i++}].tag.tag") + "=" + Plex.E(tag));
+            foreach (var tag in desired) args.Add(Plex.E($"{key}[{i++}].tag.tag") + "=" + Plex.E(tag));
         }
         if (args.Count == 0) return;
         await api.Call($"/library/sections/{Plex.E(scope.Library)}/all?type=10&id={Plex.E(now.Track.Id)}&" + string.Join("&", args), HttpMethod.Put);
@@ -124,8 +124,19 @@ public sealed class TrackMetadata
                     next[key] = value; before[key] = now.Values[key];
                 }
                 if (next.Count == 0) continue;
-                store.Remember(scope, batch, "Edit track metadata", new(now.Track, "Metadata", "", "", JsonSerializer.Serialize(before), JsonSerializer.Serialize(next)));
-                await Write(api, scope, now, next); done++;
+                var journalId=store.Remember(scope, batch, "Edit track metadata", new(now.Track, "Metadata", "", "", JsonSerializer.Serialize(before), JsonSerializer.Serialize(next)));
+                try { await Write(api, scope, now, next); }
+                catch
+                {
+                    // Keep the undo record for partial writes and lost acknowledgments.
+                    Snapshot? observed=null;
+                    try { observed=await Read(api,scope,now.Track.Id); }
+                    catch (Exception error) when (error is HttpRequestException or IOException or OperationCanceledException) { }
+                    if(observed!=null && before.All(kv=>observed.Values.TryGetValue(kv.Key,out var v) && Same(kv.Key,v,kv.Value)))
+                        store.Forget(scope,journalId);
+                    throw;
+                }
+                done++;
             }
         }
         catch (Exception ex) { throw new IOException($"{done} tracks updated. {ex.Message}", ex); }
@@ -137,6 +148,7 @@ public sealed class TrackMetadata
         var after = JsonSerializer.Deserialize<Dictionary<string, string>>(change.After)!;
         if (now.Track.Identity != change.Track.Identity || before.Any(k => !now.Values.TryGetValue(k.Key, out var v) ||
             (!Same(k.Key, v, k.Value) && !Same(k.Key, v, after[k.Key])))) throw new IOException("The track changed since this edit.");
-        await Write(api, scope, now, before);
+        var remaining=before.Where(kv=>!Same(kv.Key,now.Values[kv.Key],kv.Value)).ToDictionary();
+        if(remaining.Count>0)await Write(api, scope, now, remaining);
     }
 }

@@ -21,21 +21,25 @@ internal static partial class MacTitleBar
         }
         return 0;
     }
-    static bool ApplyMaterial(nint window,bool requested)
+    static bool ShouldReduceTransparency()
     {
         var workspace=Get(objc_getClass("NSWorkspace"),sel_registerName("sharedWorkspace"));
-        bool enable=requested && GetBool(workspace,sel_registerName("accessibilityDisplayShouldReduceTransparency"))==0;
+        return GetBool(workspace,sel_registerName("accessibilityDisplayShouldReduceTransparency"))!=0;
+    }
+    static bool ApplyMaterial(nint window,nint web,bool enable)
+    {
         if(enable==(materialView!=0))return enable;
-        var root=Get(window,sel_registerName("contentView"));
-        var web=WebView(root,objc_getClass("WKWebView"));
-        if(web==0)return false;
         var parent=Get(web,sel_registerName("superview"));
         if(enable){
             materialView=Get(Alloc("NSVisualEffectView"),sel_registerName("init"));
+            if(materialView==0)return false;
             SetObject(materialView,sel_registerName("setMaterial:"),7); // NSVisualEffectMaterialSidebar
             SetObject(materialView,sel_registerName("setBlendingMode:"),0); // Behind the window
             SetBool(materialView,sel_registerName("setTranslatesAutoresizingMaskIntoConstraints:"),0);
             PlaceSubview(parent,sel_registerName("addSubview:positioned:relativeTo:"),materialView,-1,web);
+            if(Get(materialView,sel_registerName("superview"))!=parent || parent==0){
+                SendVoid(materialView,sel_registerName("release"));materialView=0;return false;
+            }
             foreach(var edge in new[]{"leadingAnchor","trailingAnchor","topAnchor","bottomAnchor"}){
                 var anchor=Get(materialView,sel_registerName(edge));
                 var constraint=ObjectArg(anchor,sel_registerName("constraintEqualToAnchor:"),Get(web,sel_registerName(edge)));

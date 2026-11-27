@@ -79,12 +79,13 @@ internal static class Program
                         if(MacTitleBar.CheckMenusAndSelectTheme()) Console.WriteLine("Native menus ready");
                     }
                 });return;}
-                bool glass=message.StartsWith("glass:",StringComparison.Ordinal);
+                bool webReduced=message.StartsWith("muted:",StringComparison.Ordinal);
+                bool glass=webReduced || message.StartsWith("glass:",StringComparison.Ordinal);
                 if (!glass && !message.StartsWith("theme:",StringComparison.Ordinal)) return;
                 var theme = ThemeCatalog.All.FirstOrDefault(t => t.Name == message[6..]);
                 if (theme != null) window.Invoke(() =>
                 {
-                    bool applied=MacTitleBar.Apply(theme,glass,out bool active);
+                    bool applied=MacTitleBar.Apply(theme,glass,webReduced,checkWindow,out bool active);
                     window.SendWebMessage(active?"glass-active:on":"glass-active:off");
                     if (applied && checkWindow)
                     {

@@ -17,7 +17,7 @@ internal static partial class MacTitleBar
     [DllImport(ObjC, EntryPoint="objc_msgSend")] static extern void SetBool(nint obj, nint selector, byte arg);
     [DllImport(ObjC, EntryPoint="objc_msgSend")] static extern nint Color(nint obj, nint selector, double r, double g, double b, double a);
 
-    public static bool Apply(PlayerTheme theme,bool glass,out bool active)
+    public static bool Apply(PlayerTheme theme,bool glass,bool webReduced,bool checkWindow,out bool active)
     {
         active=false;
         var app = Get(objc_getClass("NSApplication"), sel_registerName("sharedApplication"));
@@ -28,6 +28,8 @@ internal static partial class MacTitleBar
             var window = ObjectArg(windows, sel_registerName("objectAtIndex:"), i);
             var title = Get(window, sel_registerName("title"));
             if (Marshal.PtrToStringUTF8(Get(title, sel_registerName("UTF8String"))) != "Mixamp") continue;
+            var web=WebView(Get(window,sel_registerName("contentView")),objc_getClass("WKWebView"));
+            if(web==0)continue;
             var rgb = Convert.FromHexString(theme.Palette.Side[1..]);
             var color = Color(objc_getClass("NSColor"), sel_registerName("colorWithSRGBRed:green:blue:alpha:"),
                 rgb[0]/255d, rgb[1]/255d, rgb[2]/255d, 1);
@@ -35,12 +37,25 @@ internal static partial class MacTitleBar
             var name = StringArg(objc_getClass("NSString"), sel_registerName("stringWithUTF8String:"), style);
             var appearance = ObjectArg(objc_getClass("NSAppearance"), sel_registerName("appearanceNamed:"), name);
             SetObject(window, sel_registerName("setAppearance:"), appearance);
-            active=ApplyMaterial(window,glass);
+            bool reduced=glass && (webReduced || ShouldReduceTransparency());
+            active=ApplyMaterial(window,web,glass && !reduced);
+            if(checkWindow && glass)
+            {
+                Console.WriteLine($"Glass selection received, reduced transparency={reduced}, material attached={active}");
+                // Exercise attachment even when the CI desktop requests reduced transparency.
+                // Its isolated first-launch window is restored before returning to the event loop.
+                if(reduced && ApplyMaterial(window,web,true))
+                {
+                    ApplyMaterial(window,web,false);
+                    Console.WriteLine("Native glass applied and restored for reduced transparency");
+                }
+            }
             if(active) color=Get(objc_getClass("NSColor"),sel_registerName("clearColor"));
             SetObject(window, sel_registerName("setBackgroundColor:"), color);
             SetBool(window, sel_registerName("setTitlebarAppearsTransparent:"), active?(byte)0:(byte)1);
             return true;
         }
+        if(checkWindow) Console.WriteLine("Mixamp window with its WKWebView was unavailable");
         return false;
     }
 }

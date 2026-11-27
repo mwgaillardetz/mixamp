@@ -47,7 +47,7 @@ function applyTheme(entry) {
 const reducedGlass=matchMedia("(prefers-reduced-transparency: reduce), (forced-colors: active)");
 function syncGlass(){
   const on=glassWanted&&!reducedGlass.matches;
-  if(window.external?.sendMessage)window.external.sendMessage((on?"glass:":"theme:")+currentTheme);
+  if(window.external?.sendMessage)window.external.sendMessage((on?"glass:":glassWanted?"muted:":"theme:")+currentTheme);
   else document.documentElement.classList.toggle("glass",on);
 }
 reducedGlass.addEventListener("change",()=>{if(currentTheme)syncGlass();});

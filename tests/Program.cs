@@ -367,11 +367,11 @@ try
         );
         var metadata=await TrackMetadata.Open(api,scope,["2","3"]);
         Check(metadata.Count==2 && metadata.Fields.Single(f=>f.Key=="title").Value==null,"batch editor shows mixed titles");
-        await metadata.Save(store,new(){["genre"]="Post-rock\nVocal, jazz",["parentIndex"]="5"});
+        await metadata.Save(store,new(){["genre"]="Jazz\nPost-rock\nVocal, jazz",["parentIndex"]="5"});
         foreach(var step in store.LastChanges(scope,false))
         {
             var fresh=await api.Fresh(step.Change.Track.Id);
-            Check(fresh.Title==step.Change.Track.Title && fresh.Disc==5 && fresh.Genre.Contains("Vocal, jazz"),"batch writes selected metadata fields only");
+            Check(fresh.Title==step.Change.Track.Title && fresh.Disc==5 && fresh.Genre.Contains("Jazz") && fresh.Genre.Contains("Vocal, jazz"),"batch writes selected metadata fields only");
             await TrackMetadata.Restore(api,scope,step.Change);
             store.CompleteChange(scope,step,false);
             Check((await api.Fresh(fresh.Id)).Genre==step.Change.Track.Genre,"metadata undo restores the previous tag set");
