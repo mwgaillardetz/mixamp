@@ -17,6 +17,7 @@ static class Dialogs
             Content = body,
             ShowInTaskbar = false,
         };
+        if (w.Owner is MainWindow { UsesUbuntuFont: true } owner) w.FontFamily = owner.FontFamily;
         w.PreviewKeyDown += (s, e) =>
         {
             if (e.Key == Key.Escape)

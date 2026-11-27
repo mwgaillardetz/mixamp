@@ -35,6 +35,7 @@ function applyTheme(entry) {
   root.dataset.theme=entry.name;
   for(const [key,value] of Object.entries(entry.palette))root.style.setProperty("--"+key,value);
   root.style.colorScheme=["Silver Halide","Cyanotype"].includes(entry.name)?"light":"dark";
+  window.external?.sendMessage?.("theme:"+entry.name);
   const classic=entry.name==="Bitstream 98", seek=$("seek");
   const seekParent=document.querySelector(classic?"header":".deck");
   if(seek.parentElement!==seekParent)seekParent.append(seek);
@@ -59,7 +60,16 @@ $("view").onclick=()=>{
   heading.onkeydown=e=>{
     if(e.key==="ArrowRight"||e.key==="ArrowLeft"){e.preventDefault();folder.open=e.key==="ArrowRight";}
   };
-  menu.replaceChildren(folder);menu.hidden=false;
+  const font=document.createElement("button"), root=document.documentElement;
+  const enabled=root.classList.contains("ubuntuFont");
+  font.setAttribute("role","menuitemcheckbox");font.setAttribute("aria-checked",String(enabled));
+  font.textContent="Use Ubuntu font";
+  font.onclick=run(async()=>{
+    menu.hidden=true;$("view").focus();
+    await call("setting",{id:"font",value:enabled?"theme":"ubuntu"});
+    root.classList.toggle("ubuntuFont",!enabled);
+  });
+  menu.replaceChildren(folder,font);menu.hidden=false;
   const position=()=>{menu.style.left=Math.max(2,Math.min(anchor.left,innerWidth-menu.offsetWidth-4))+"px";
     menu.style.top=Math.max(2,Math.min(anchor.bottom+2,innerHeight-menu.offsetHeight-4))+"px";};
   folder.ontoggle=position;position();heading.focus();
@@ -143,13 +153,25 @@ async function setTone(){
   if(ctx)preamp.gain.setTargetAtTime(p.headroom,ctx.currentTime,.04);
   $("eq").title=eqMode.startsWith("Custom|")?"Custom":eqMode+" · "+p.name;
 }
+function showCover(url){
+  const slot=$("cover");
+  if(url && slot.firstElementChild?.getAttribute("src")===url)return;
+  slot.replaceChildren();slot.hidden=true;
+  if(!url)return;
+  const img=new Image();
+  img.alt="";img.onload=()=>{if(img.parentNode===slot)slot.hidden=false;};
+  img.onerror=()=>img.remove();slot.append(img);img.src=url;
+}
 async function start(track){
   initAudio();await ctx.resume();const seq=++sequence;
   audio.pause();$("status").textContent="Opening "+track.title+"…";
   const data=await call("prepare",{id:track.id});if(seq!==sequence)return;
   playing=data.track;clipEnd=data.cue.end==null?null:data.cue.end/1000;await setTone();if(seq!==sequence)return;
   audio.src=data.url;audio.volume=Number($("volume").value);audio.onloadedmetadata=()=>{if(data.cue.start!=null)audio.currentTime=data.cue.start/1000;};
-  $("now").textContent=playing.title;$("by").textContent=playing.artistDisplay+" · "+playing.album;
+  for(const [id,value] of [["now",playing.title],["by",playing.artistDisplay],["album",playing.album]]){
+    $(id).textContent=$(id).title=value||"";
+  }
+  showCover(data.artwork);
   if(navigator.mediaSession && window.MediaMetadata)
     navigator.mediaSession.metadata=new MediaMetadata({title:playing.title,artist:playing.artistDisplay,album:playing.album});
   await audio.play();$("status").textContent="Direct play";
@@ -189,11 +211,18 @@ if(navigator.mediaSession){
 }
 function updateTransport(active){
   const action=active?"Pause":"Play", button=$("play");
-  button.textContent=active?"Ⅱ":"▶";button.setAttribute("aria-label",action);button.title=action+" (Space)";
+  button.classList.toggle("playing",active);button.setAttribute("aria-label",action);button.title=action+" (Space)";
   if(navigator.mediaSession)navigator.mediaSession.playbackState=active?"playing":"paused";
 }
-$("volume").oninput=()=>audio.volume=+$("volume").value;$("seek").oninput=()=>{if(playing)audio.currentTime=+$("seek").value;};
+function setVolume(){
+  const slider=$("volume"), percent=Math.round(Number(slider.value)*100)+"%";
+  audio.volume=Number(slider.value);slider.style.setProperty("--fill",percent);
+  slider.setAttribute("aria-valuetext",percent);slider.title="Volume "+percent;
+}
+$("volume").oninput=setVolume;setVolume();
+$("seek").oninput=()=>{if(playing)audio.currentTime=+$("seek").value;};
 audio.ontimeupdate=()=>{$("clock").textContent=time(audio.currentTime);$("seek").max=isFinite(audio.duration)?audio.duration:0;$("seek").value=audio.currentTime;
+  $("seek").style.setProperty("--fill",(audio.duration>0 ? 100*audio.currentTime/audio.duration : 0)+"%");
   if(clipEnd!==null&&audio.currentTime>=clipEnd){clipEnd=null;audio.pause();run(()=>advance(1))();}};
 audio.onended=run(()=>{updateTransport(false);return advance(1);});
 audio.onerror=()=>{updateTransport(false);$("status").textContent="The audio decoder could not open this track.";};
@@ -402,7 +431,7 @@ document.onkeydown=run(async e=>{
   if(i*26<grid.scrollTop)grid.scrollTop=i*26;
   else if((i+1)*26+28>grid.scrollTop+grid.clientHeight)grid.scrollTop=(i+1)*26+28-grid.clientHeight;
 });
-run(async()=>{const config=await call("config");themes=config.themes;applyTheme(themes.find(t=>t.name===config.theme));$("view").disabled=false;eqMode=config.eq;showBars=config.bars;$("bars").hidden=!showBars;
+run(async()=>{const config=await call("config");themes=config.themes;document.documentElement.classList.toggle("ubuntuFont",config.ubuntuFont);applyTheme(themes.find(t=>t.name===config.theme));$("view").disabled=false;eqMode=config.eq;showBars=config.bars;$("bars").hidden=!showBars;
   if(config.columns){const saved=config.columns.split("|").filter(k=>fields.some(f=>f[0]===k));if(saved.length)columns=new Set(saved);}
   catalog=await call("cached");show("Songs",catalog);if(await call("resume"))await reload();
 })();

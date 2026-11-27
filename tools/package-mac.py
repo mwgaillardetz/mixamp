@@ -3,7 +3,6 @@ import os
 import plistlib
 import shutil
 import stat
-import struct
 import subprocess
 import sys
 import tempfile
@@ -32,9 +31,7 @@ def build(rid):
         subprocess.run(cc+["-Os","-Wl,-headerpad,0x400",str(root/"launcher/mac.c"),"-o",str(binaries/"Mixamp")],check=True)
         subprocess.run([dotnet, "publish", str(root/"src/Mac/Mac.csproj"), "-r", rid, "-c", "Release",
                         "--self-contained", "true", "-p:DebugType=None", "-o", str(payload)], check=True)
-        png = (root/"docs/mixtape.png").read_bytes()
-        chunk = b"ic08" + struct.pack(">I", len(png)+8) + png
-        (resources/"Mixamp.icns").write_bytes(b"icns"+struct.pack(">I",len(chunk)+8)+chunk)
+        shutil.copyfile(root/"launcher/Mixamp.icns", resources/"Mixamp.icns")
         with (app/"Contents/Info.plist").open("wb") as f:
             plistlib.dump(dict(CFBundleName="Mixamp",CFBundleDisplayName="Mixamp",CFBundlePackageType="APPL",
                 CFBundleIdentifier="app.mixamp.player",CFBundleExecutable="Mixamp",CFBundleIconFile="Mixamp",

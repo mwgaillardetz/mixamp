@@ -107,7 +107,7 @@ public record Track(
             parts,
             n.Str("playQueueItemID"),
             n.Str("playlistItemID"),
-            CleanKey(n.Str("thumb")),
+            CleanKey(n.Str("thumb")) is { Length: > 0 } thumb ? thumb : CleanKey(n.Str("parentThumb")),
             n.Str("librarySectionID")
         );
     }

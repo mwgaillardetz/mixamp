@@ -49,7 +49,9 @@
   <Style TargetType="DataGridColumnHeader"><Setter Property="Background" Value="{DynamicResource Side}"/><Setter Property="Foreground" Value="{DynamicResource Muted}"/><Setter Property="Padding" Value="7,5"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="BorderThickness" Value="0,0,1,1"/><Setter Property="BorderBrush" Value="{DynamicResource Line}"/></Style>
  </Window.Resources>
  <DockPanel Background="{DynamicResource Canvas}">
-  <Menu DockPanel.Dock="Top" x:Name="Menus"/>
+  <Menu DockPanel.Dock="Top" x:Name="Menus" Background="{DynamicResource Side}" Foreground="{DynamicResource Ink}" Padding="4,1">
+   <Menu.Resources><Style TargetType="MenuItem" BasedOn="{StaticResource PlayerMenuItem}"/></Menu.Resources>
+  </Menu>
   <Border x:Name="ClassicTitle" DockPanel.Dock="Top" Visibility="Collapsed" Background="#2C2C40" Padding="6,3" BorderBrush="#080913" BorderThickness="1">
    <Grid Height="14" Background="{StaticResource TitleStripes}">
     <TextBlock Text="M I X A M P" HorizontalAlignment="Center" Background="#303043" Foreground="#F4F3FA" Padding="10,0" FontFamily="Tahoma" FontWeight="Bold" FontStyle="Italic" FontSize="11"/>
@@ -68,7 +70,10 @@
     <Border x:Name="PlayerScreen" Grid.Column="1" Background="{DynamicResource Tint}" BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="4" Padding="12,3" Margin="18,0">
      <Grid ClipToBounds="True"><local:Visualizer x:Name="NowBars" HorizontalAlignment="Right" Width="104" Height="24" Margin="0,0,56,4" VerticalAlignment="Bottom" BottomAligned="True" Opacity=".17" IsHitTestVisible="False" Focusable="False"/><DockPanel><Image Source="{Binding Artwork}" DockPanel.Dock="Left" MaxWidth="52" MaxHeight="52" Stretch="Uniform" Margin="0,0,6,0"/><TextBlock x:Name="TimeDisplay" DockPanel.Dock="Right" Text="{Binding Clock}" ToolTip="{Binding ClipClock}" Foreground="{DynamicResource Accent}" FontFamily="Consolas" VerticalAlignment="Center" FontSize="18"/><StackPanel x:Name="TrackDetails"><TextBlock x:Name="TrackDisplay" Text="{Binding Now}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/><TextBlock Text="{Binding Byline}" Foreground="{DynamicResource Muted}" FontSize="11" TextTrimming="CharacterEllipsis"/><Slider x:Name="SeekBar" IsEnabled="{Binding Seekable}" Height="16" AutomationProperties.Name="Original media position" Minimum="{Binding Minimum}" Maximum="{Binding Maximum}" Value="{Binding Position,Mode=OneWay}" PreviewMouseLeftButtonUp="SeekRelease" PreviewKeyUp="SeekKeys"/></StackPanel></DockPanel></Grid>
     </Border>
-    <StackPanel x:Name="VolumePanel" Grid.Column="2" VerticalAlignment="Center"><TextBlock Text="Volume" Foreground="{DynamicResource Muted}" FontSize="11"/><Slider x:Name="VolumeBar" AutomationProperties.Name="Volume" Width="78" Maximum="1" SmallChange=".05" Value="{Binding Volume}"/></StackPanel>
+    <StackPanel x:Name="VolumePanel" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+     <Path Data="M1,5 H4 L9,1 V15 L4,11 H1 Z M12,5 Q15,8 12,11 M15,2 Q21,8 15,14" Stroke="{DynamicResource Muted}" StrokeLineJoin="Round" StrokeThickness="1.4" VerticalAlignment="Center" Margin="0,0,6,0"/>
+     <Slider x:Name="VolumeBar" AutomationProperties.Name="Volume" ToolTip="{Binding Volume,StringFormat=Volume {0:P0}}" Width="82" Height="24" Maximum="1" SmallChange=".05" LargeChange=".1" IsMoveToPointEnabled="True" Value="{Binding Volume}"/>
+    </StackPanel>
    </Grid>
   </Border>
   <Border DockPanel.Dock="Bottom" Background="{DynamicResource Side}" BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0" Padding="12,5"><DockPanel><TextBlock DockPanel.Dock="Right" Margin="10,0,0,0" Text="{Binding LibraryProgress}" Foreground="{DynamicResource Accent}"/><TextBlock Text="{Binding Status}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Status}" Foreground="{DynamicResource Muted}"/></DockPanel></Border>

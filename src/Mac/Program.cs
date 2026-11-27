@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Photino.NET;
+using Mixamp.Core;
 using Microsoft.Extensions.Hosting;
 
 namespace Mixamp;
@@ -47,6 +48,7 @@ internal static class Program
         web.UseDefaultFiles();web.UseStaticFiles();
         web.MapGet("/progress",()=>Results.Text(library.Progress));
         web.MapGet("/audio/{name}",(string name)=>library.Audio(name));
+        web.MapGet("/artwork/{id}",(string id, CancellationToken ct)=>library.Artwork(id,ct));
         web.MapPost("/command",async (Request r)=>
         {
             try
@@ -63,8 +65,17 @@ internal static class Program
         {
             string url=web.Urls.Single()+"/launch/"+ticket;
             if(fixture){Console.WriteLine(url);web.WaitForShutdownAsync().GetAwaiter().GetResult();return;}
-            new PhotinoWindow().SetTitle("Mixamp").SetUseOsDefaultSize(false).SetSize(1120,720)
-                .SetMinSize(740,400).Load(url).WaitForClose();
+            var window = new PhotinoWindow().SetTitle("Mixamp").SetUseOsDefaultSize(false).SetSize(1120,720).SetMinSize(740,400);
+            window.RegisterWebMessageReceivedHandler((_,message) =>
+            {
+                if (!OperatingSystem.IsMacOS() || !message.StartsWith("theme:",StringComparison.Ordinal)) return;
+                var theme = ThemeCatalog.All.FirstOrDefault(t => t.Name == message[6..]);
+                if (theme != null) window.Invoke(() =>
+                {
+                    if (MacTitleBar.Apply(theme) && checkWindow) Console.WriteLine("Window theme applied");
+                });
+            });
+            window.Load(url).WaitForClose();
         }
         finally {web.StopAsync().GetAwaiter().GetResult();web.DisposeAsync().AsTask().GetAwaiter().GetResult();}
     }

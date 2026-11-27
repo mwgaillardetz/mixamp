@@ -250,6 +250,21 @@ public partial class MainWindow
         Application.Current.Shutdown(error == null ? 0 : 1);
     }
 
+    async Task CheckMenuTheme(MenuItem menu)
+    {
+        menu.IsSubmenuOpen = true;
+        try
+        {
+            await Dispatcher.InvokeAsync(() => {}, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+            var popup = menu.Template.FindName("PART_Popup",menu) as System.Windows.Controls.Primitives.Popup;
+            var first = (MenuItem)menu.Items[0];
+            if (popup?.Child is not Border border || !popup.IsOpen ||
+                !Equals(border.Background,FindResource("Paper")) || !Equals(first.Foreground,FindResource("Ink")))
+                throw new IOException("The open menu did not follow " + theme);
+        }
+        finally { menu.IsSubmenuOpen = false; }
+    }
+
     async Task Smoke(string destination)
     {
         try
@@ -311,6 +326,7 @@ public partial class MainWindow
                 );
                 if (!ReferenceEquals(selected, Songs.SelectedItem))
                     throw new IOException("Theme lost the selected track.");
+                await CheckMenuTheme(libraryMenu);
                 var visual = (FrameworkElement)Content;
                 var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap(
                     (int)visual.ActualWidth,
@@ -325,6 +341,20 @@ public partial class MainWindow
                 using var stream = File.Create(Path.Combine(destination, name + ".png"));
                 png.Save(stream);
             }
+            ubuntuFont.IsChecked = true;
+            ubuntuFont.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            Apply("Bitstream 98");
+            foreach (var family in new[] { Songs.FontFamily, libraryMenu.FontFamily, TrackDisplay.FontFamily })
+            {
+                if (!new Typeface(family,FontStyles.Normal,FontWeights.Normal,FontStretches.Normal)
+                    .TryGetGlyphTypeface(out var glyphs) || !glyphs.FamilyNames.Values.Contains("Ubuntu"))
+                    throw new IOException("The Ubuntu option did not load the bundled font.");
+            }
+            ubuntuFont.IsChecked = false;
+            ubuntuFont.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            if (FontFamily.Source != (SystemParameters.HighContrast ? "Segoe UI" : "Tahoma") ||
+                vm.Store.Get("installation","font") != "theme")
+                throw new IOException("Turning off Ubuntu did not restore the theme font.");
             var selectedTrack = (Mixamp.Core.Track)selected;
             await ExerciseEditor(selectedTrack);
             var scroll = VisualChildren<System.Windows.Controls.Primitives.ScrollBar>(Songs)

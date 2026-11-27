@@ -2,6 +2,8 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Interop;
+using System.Runtime.InteropServices;
 
 namespace Mixamp;
 
@@ -9,12 +11,15 @@ public partial class MainWindow : Window
 {
     readonly Session vm;
     readonly MenuItem themeMenu = new() { Header = "Themes", FontWeight = FontWeights.Bold };
+    readonly MenuItem ubuntuFont = new() { Header = "Use Ubuntu font", IsCheckable = true };
+    static readonly FontFamily Ubuntu = new(new Uri("pack://application:,,,/"), "./Fonts/Ubuntu/#Ubuntu");
     string theme = "";
     double normalHeight;
 
     public MainWindow()
     {
         InitializeComponent();
+        SourceInitialized += (_, _) => ApplyCaption();
         var dir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "Mixamp"
@@ -148,6 +153,13 @@ public partial class MainWindow : Window
         var appearance = new MenuItem { Header = "_View" };
         Menus.Items.Add(appearance);
         appearance.Items.Add(themeMenu);
+        appearance.Items.Add(ubuntuFont);
+        ubuntuFont.IsChecked = vm.Store.Get("installation", "font") == "ubuntu";
+        ubuntuFont.Click += (_, _) =>
+        {
+            vm.Store.Set("installation", "font", ubuntuFont.IsChecked ? "ubuntu" : "theme");
+            ApplyFont();
+        };
         foreach (var entry in ThemeCatalog.All)
         {
             var option = new MenuItem { Header = entry.Name, FontWeight = FontWeights.Normal,
@@ -365,6 +377,24 @@ public partial class MainWindow : Window
 
     static SolidColorBrush Paint(string hex) => new((Color)ColorConverter.ConvertFromString(hex));
 
+    [DllImport("dwmapi.dll")]
+    static extern int DwmSetWindowAttribute(nint window, int attribute, ref int value, int size);
+
+    void ApplyCaption()
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        if (handle == 0) return;
+        static int ColorRef(Color c) => c.R | (c.G << 8) | (c.B << 16);
+        var side = ((SolidColorBrush)FindResource("Side")).Color;
+        var ink = ((SolidColorBrush)FindResource("Ink")).Color;
+        int dark = !SystemParameters.HighContrast && side.R + side.G + side.B < 384 ? 1 : 0;
+        int caption = SystemParameters.HighContrast ? -1 : ColorRef(side);
+        int title = SystemParameters.HighContrast ? -1 : ColorRef(ink);
+        DwmSetWindowAttribute(handle, 20, ref dark, sizeof(int));    // DWMWA_USE_IMMERSIVE_DARK_MODE
+        DwmSetWindowAttribute(handle, 35, ref caption, sizeof(int)); // DWMWA_CAPTION_COLOR
+        DwmSetWindowAttribute(handle, 36, ref title, sizeof(int));   // DWMWA_TEXT_COLOR
+    }
+
     void Apply(string? name)
     {
         var selected = ThemeCatalog.Resolve(name);
@@ -393,10 +423,11 @@ public partial class MainWindow : Window
         Songs.Resources[SystemColors.HighlightTextBrushKey] = dict["Ink"];
         Resources.MergedDictionaries.Clear();
         Resources.MergedDictionaries.Add(dict);
+        ApplyCaption();
         bool amp = theme == "Bitstream 98" && !SystemParameters.HighContrast;
         ClassicTitle.Visibility = amp ? Visibility.Visible : Visibility.Collapsed;
         SidebarBrand.Visibility = amp ? Visibility.Collapsed : Visibility.Visible;
-        FontFamily = new FontFamily(theme == "Phosphor FM" ? "Consolas" : amp ? "Tahoma" : "Segoe UI");
+        ApplyFont();
         Songs.RowHeight = amp ? 22 : 26;
         Songs.SetResourceReference(ForegroundProperty, amp ? "Accent" : "Ink");
         Grid.SetColumn(PlayerScreen, amp ? 0 : 1);
@@ -424,26 +455,35 @@ public partial class MainWindow : Window
         PlayerScreen.SetResourceReference(Border.BorderBrushProperty, amp ? "Canvas" : "Line");
         PlayerDeck.Padding = amp ? new Thickness(8,4,8,6) : new Thickness(12,9,12,9);
         TrackDisplay.SetResourceReference(TextBlock.ForegroundProperty, amp ? "Accent" : "Ink");
-        TrackDisplay.FontFamily = amp ? new FontFamily("Consolas") : FontFamily;
-        TimeDisplay.FontFamily = amp
-            ? new FontFamily(new Uri("pack://application:,,,/"), "./Fonts/#Mixamp Meter")
-            : new FontFamily("Consolas");
         NowBars.Margin = amp ? new Thickness(0,0,4,0) : new Thickness(0,0,56,4);
         TimeDisplay.FontSize = amp ? 32 : 18;
         DockPanel.SetDock(TimeDisplay, amp ? Dock.Left : Dock.Right);
         TimeDisplay.Margin = amp ? new Thickness(0,0,12,0) : new Thickness(0);
         foreach (Button button in TransportKeys.Children)
         {
-            button.Style = (Style)FindResource(amp ? "MetalKey" : "Key");
+            bool play = Equals(button.CommandParameter,"Toggle");
+            button.Style = (Style)FindResource(amp ? "MetalKey" : play ? "PlayKey" : "TransportKey");
             var icon = (System.Windows.Shapes.Path)button.Content;
             if (amp) icon.Fill = Paint("#212331");
-            else icon.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, Equals(button.CommandParameter,"Toggle") ? "Accent" : "Ink");
+            else if (play && SystemParameters.HighContrast) icon.Fill = SystemColors.HighlightTextBrush;
+            else icon.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, play ? "Paper" : "Ink");
         }
-        foreach (var slider in new[] { SeekBar, VolumeBar })
-            if (amp) slider.Style = (Style)FindResource("MetalFader");
-            else slider.ClearValue(StyleProperty);
+        SeekBar.Style = VolumeBar.Style = (Style)FindResource(amp ? "MetalFader" : "PlayerFader");
         vm.Store.Set("installation", "theme", theme);
     }
+
+    void ApplyFont()
+    {
+        bool classic = theme == "Bitstream 98" && !SystemParameters.HighContrast;
+        FontFamily = ubuntuFont.IsChecked ? Ubuntu :
+            new FontFamily(theme == "Phosphor FM" ? "Consolas" : classic ? "Tahoma" : "Segoe UI");
+        Menus.FontFamily = FontFamily;
+        TrackDisplay.FontFamily = classic && !ubuntuFont.IsChecked ? new FontFamily("Consolas") : FontFamily;
+        TimeDisplay.FontFamily = classic ? new FontFamily(new Uri("pack://application:,,,/"), "./Fonts/#Mixamp Meter")
+            : ubuntuFont.IsChecked ? Ubuntu : new FontFamily("Consolas");
+    }
+
+    internal bool UsesUbuntuFont => ubuntuFont.IsChecked;
 
     void DoubleClick(object s, MouseButtonEventArgs e)
     {

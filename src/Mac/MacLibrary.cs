@@ -20,6 +20,8 @@ sealed class MacLibrary : IDisposable
     bool owner, candidateOwner;
     sealed record StreamPart(string Name, Plex Server, string Key, long Size);
     volatile StreamPart? remote;
+    sealed record Cover(string Id, Plex Server, string Key);
+    volatile Cover? cover;
     string? mediaKey, mediaPath;
     string progress = "Ready";
     string planId = "";
@@ -58,7 +60,7 @@ sealed class MacLibrary : IDisposable
         _ = sections.Single(s => s.Str("key") == id);
         api?.Dispose(); api = candidate; candidate = null;
         owner = candidateOwner; scope = new(user,machine,id);
-        pending = null; mediaKey = null; remote = null;
+        pending = null; mediaKey = null; remote = null; cover = null;
         radioStations.Clear(); radioChoices.Clear(); selectedRadio = null;
         store.Set("installation","lastScope",JsonSerializer.Serialize(scope));
     }
@@ -175,7 +177,7 @@ sealed class MacLibrary : IDisposable
                     {
                         var probe = await api!.Range(part.Key,0,1,null,default);
                         remote = new(Guid.NewGuid().ToString("N")+extension,api,part.Key,probe.Size);
-                        return new { url="/audio/"+remote.Name, cue=store.ReadCue(scope,track), track };
+                        return Prepared(track,remote.Name);
                     }
                     catch (Exception ex) when (ex is IOException or HttpRequestException) { remote=null; }
                     // A server without byte ranges needs a seekable local original for WebKit.
@@ -193,12 +195,14 @@ sealed class MacLibrary : IDisposable
                         }
                         catch { if(mediaPath != path) File.Delete(path); throw; }
                     }
-                    return new { url="/audio/"+Path.GetFileName(mediaPath), cue=store.ReadCue(scope,track), track };
+                    return Prepared(track,Path.GetFileName(mediaPath)!);
                 case "eq": return ToneProfile.Choose(r.Value,r.Extra);
                 case "config": return new { eq=store.Get("installation","eq") ?? "Auto", columns=store.Get("installation","columns"),bars=store.Get("installation","bars") != "off",
-                    themes=ThemeCatalog.All, theme=ThemeCatalog.Resolve(store.Get("installation","theme")).Name };
+                    themes=ThemeCatalog.All, theme=ThemeCatalog.Resolve(store.Get("installation","theme")).Name,
+                    ubuntuFont=store.Get("installation","font") == "ubuntu" };
                 case "setting":
-                    if (r.Id is not ("eq" or "columns" or "bars" or "theme")) throw new ArgumentException();
+                    if (r.Id is not ("eq" or "columns" or "bars" or "theme" or "font")) throw new ArgumentException();
+                    if (r.Id=="font" && r.Value is not ("ubuntu" or "theme")) throw new ArgumentException("Unknown font.");
                     if (r.Id=="theme" && ThemeCatalog.All.All(t=>t.Name!=r.Value)) throw new ArgumentException("Unknown theme.");
                     store.Set("installation",r.Id,r.Value); return true;
                 case "review": return await Review(r);
@@ -214,6 +218,33 @@ sealed class MacLibrary : IDisposable
         finally { gate.Release(); }
     }
     static string Required(string s) => !string.IsNullOrWhiteSpace(s) ? s.Trim() : throw new IOException("Enter a value.");
+    object Prepared(Track track,string audioName)
+    {
+        if (track.Thumb.Length == 0) cover = null;
+        else if (cover?.Key != track.Thumb) cover = new(Guid.NewGuid().ToString("N"),api!,track.Thumb);
+        return new { url="/audio/"+audioName, cue=store.ReadCue(scope,track), track,
+            artwork=cover == null ? null : "/artwork/"+cover.Id };
+    }
+    public async Task<IResult> Artwork(string id,CancellationToken ct)
+    {
+        var current = cover;
+        if (current == null || current.Id != id) return Results.NotFound();
+        try
+        {
+            var bytes = await current.Server.Thumbnail(current.Key,ct);
+            string? mime = bytes switch
+            {
+                [0xff,0xd8,0xff,..] => "image/jpeg",
+                [137,80,78,71,13,10,26,10,..] => "image/png",
+                [71,73,70,56,..] => "image/gif",
+                [82,73,70,70,_,_,_,_,87,69,66,80,..] => "image/webp",
+                _ => null
+            };
+            return mime == null ? Results.NotFound() : Results.File(bytes,mime);
+        }
+        catch (Exception ex) when (ex is IOException or HttpRequestException or ObjectDisposedException or OperationCanceledException)
+        { return Results.NotFound(); }
+    }
     async Task<Track> Fresh(string id)
     {
         var t=await (api ?? throw new IOException("Connect to Plex first.")).Fresh(id);

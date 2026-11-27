@@ -11,6 +11,7 @@
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.15" />
     <Compile Include="../Mixamp/Account.cs" Link="Account.cs" />
     <Content Include="../Assets/MixampMeter.ttf" Link="wwwroot/MixampMeter.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../Assets/Ubuntu/*.ttf" Link="wwwroot/fonts/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../docs/mixtape.png" Link="wwwroot/mixtape.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

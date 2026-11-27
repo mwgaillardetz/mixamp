@@ -1,5 +1,7 @@
 # Mixamp third-party components
 
+Mixamp includes the Ubuntu font family under the Ubuntu Font Licence 1.0. [Licence](notices/Ubuntu-Font-Licence.txt) · [Font source](https://github.com/google/fonts/tree/bed55e0de5cfa8f5fb94f9a1f49409b5ec504469/ufl/ubuntu)
+
 The self-contained distribution includes Microsoft .NET, the Windows Desktop runtime and WPF 10.0.15. Their licenses and upstream third-party notices are in the notices directory. Microsoft.Data.Sqlite and its Core assembly 10.0.15 use the MIT license. The Windows SDK .NET projection uses the Microsoft Windows SDK distribution terms. C#/WinRT supplies WinRT.Runtime under the MIT license. [Windows SDK terms](https://aka.ms/WinSDKLicenseURL)
 
 SQLitePCLRaw 2.1.13 uses Apache License 2.0. Its e_sqlite3 native library includes SQLite, dedicated to the public domain. [SQLite copyright](https://www.sqlite.org/copyright.html)
