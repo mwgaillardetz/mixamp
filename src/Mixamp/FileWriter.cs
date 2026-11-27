@@ -46,7 +46,7 @@ sealed class FileWriter(Store store, Scope scope, Plex api)
         uint flags
     );
 
-    static FileStream OpenPart(string path)
+    internal static FileStream OpenPart(string path)
     {
         var file = CreateFileW(path, 0x80000000, 5, IntPtr.Zero, 3, 0x00200000, IntPtr.Zero);
         try
@@ -73,7 +73,7 @@ sealed class FileWriter(Store store, Scope scope, Plex api)
         }
     }
 
-    sealed class DirectoryLease : IDisposable
+    internal sealed class DirectoryLease : IDisposable
     {
         readonly List<SafeFileHandle> pins = [];
 
@@ -121,7 +121,7 @@ sealed class FileWriter(Store store, Scope scope, Plex api)
         }
     }
 
-    public async Task<string> Write(Track t, Dictionary<string, string> edits)
+    public async Task<string> Write(Track t, Dictionary<string, string> edits, string? batch = null)
     {
         var fresh = await api.Fresh(t.Id);
         if (
@@ -185,7 +185,9 @@ sealed class FileWriter(Store store, Scope scope, Plex api)
             )
                 throw new IOException("Source identity changed before replacement.");
             pending = true;
-            string outcome = journal.Commit(path, before, tmp, change);
+            string outcome = journal.Commit(path, before, tmp, change, recordBackup: batch == null ? null :
+                (backup, after) => store.Remember(scope, batch, "Edit song information",
+                    new(t, "Tags", part.File, backup, before, after, path)));
             pending = false;
             return outcome;
         }

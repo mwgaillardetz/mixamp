@@ -1,1 +1,39 @@
-<Application x:Class="Mixamp.App" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" StartupUri="MainWindow.xaml"><Application.Resources/></Application>
+<Application x:Class="Mixamp.App" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" StartupUri="MainWindow.xaml">
+ <Application.Resources>
+  <Style x:Key="ScrollPage" TargetType="RepeatButton">
+   <Setter Property="Focusable" Value="False"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"/></ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style TargetType="ScrollBar">
+   <Setter Property="Width" Value="12"/>
+   <Setter Property="Focusable" Value="False"/>
+   <Setter Property="Template"><Setter.Value>
+    <ControlTemplate TargetType="ScrollBar">
+     <Border Background="{DynamicResource ScrollRail}">
+      <Track x:Name="PART_Track" Orientation="{TemplateBinding Orientation}" IsDirectionReversed="True"
+             Minimum="{TemplateBinding Minimum}" Maximum="{TemplateBinding Maximum}" ViewportSize="{TemplateBinding ViewportSize}"
+             Value="{Binding Value, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
+       <Track.DecreaseRepeatButton><RepeatButton x:Name="less" Command="ScrollBar.PageUpCommand" Style="{StaticResource ScrollPage}"/></Track.DecreaseRepeatButton>
+       <Track.Thumb><Thumb x:Name="grip" MinHeight="20" Background="{DynamicResource ScrollGrip}">
+        <Thumb.Template><ControlTemplate TargetType="Thumb"><Border Background="Transparent" Padding="2">
+         <Border x:Name="fill" Background="{TemplateBinding Background}" CornerRadius="3"/>
+        </Border><ControlTemplate.Triggers>
+         <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="fill" Property="Background" Value="{DynamicResource ScrollHighlight}"/></Trigger>
+         <Trigger Property="IsDragging" Value="True"><Setter TargetName="fill" Property="Background" Value="{DynamicResource ScrollHighlight}"/></Trigger>
+        </ControlTemplate.Triggers></ControlTemplate></Thumb.Template>
+       </Thumb></Track.Thumb>
+       <Track.IncreaseRepeatButton><RepeatButton x:Name="more" Command="ScrollBar.PageDownCommand" Style="{StaticResource ScrollPage}"/></Track.IncreaseRepeatButton>
+      </Track>
+     </Border>
+     <ControlTemplate.Triggers><Trigger Property="Orientation" Value="Horizontal">
+      <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False"/>
+      <Setter TargetName="less" Property="Command" Value="ScrollBar.PageLeftCommand"/>
+      <Setter TargetName="more" Property="Command" Value="ScrollBar.PageRightCommand"/>
+      <Setter TargetName="grip" Property="MinHeight" Value="0"/><Setter TargetName="grip" Property="MinWidth" Value="20"/>
+     </Trigger></ControlTemplate.Triggers>
+    </ControlTemplate>
+   </Setter.Value></Setter>
+   <Style.Triggers><Trigger Property="Orientation" Value="Horizontal"><Setter Property="Height" Value="12"/><Setter Property="Width" Value="Auto"/></Trigger></Style.Triggers>
+  </Style>
+ </Application.Resources>
+</Application>

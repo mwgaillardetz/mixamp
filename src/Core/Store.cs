@@ -25,8 +25,8 @@ public sealed class Store
                 """
             )
             .ExecuteNonQuery();
-        foreach (var col in Columns.Values.Distinct())
-            Sql(db, $"CREATE INDEX IF NOT EXISTS idx_{col} ON tracks(scope,{col},id)")
+        foreach (var (key, col) in Columns)
+            Sql(db, $"CREATE INDEX IF NOT EXISTS idx_{(col.StartsWith("json_extract") ? key + "_sort" : col)} ON tracks(scope,{col},id)")
                 .ExecuteNonQuery();
         Sql(
                 db,
@@ -44,7 +44,7 @@ public sealed class Store
         using var prefs = Open(settings);
         Sql(
                 prefs,
-                "CREATE TABLE IF NOT EXISTS prefs(scope TEXT,k TEXT,v TEXT, PRIMARY KEY(scope,k));"
+                "CREATE TABLE IF NOT EXISTS prefs(scope TEXT,k TEXT,v TEXT, PRIMARY KEY(scope,k)); CREATE TABLE IF NOT EXISTS undo(id INTEGER PRIMARY KEY,scope TEXT,batch TEXT,name TEXT,data TEXT); CREATE INDEX IF NOT EXISTS undo_scope ON undo(scope,id); CREATE TABLE IF NOT EXISTS redo(id INTEGER PRIMARY KEY,scope TEXT,batch TEXT,name TEXT,data TEXT); CREATE INDEX IF NOT EXISTS redo_scope ON redo(scope,id);"
             )
             .ExecuteNonQuery();
     }
@@ -59,6 +59,10 @@ public sealed class Store
         ["Number"] = "number",
         ["Year"] = "year",
         ["Length"] = "duration",
+        ["Genre"] = "json_extract(data,'$.Genre') COLLATE NOCASE",
+        ["FilePath"] = "json_extract(data,'$.Parts[0].File') COLLATE NOCASE",
+        ["Format"] = "json_extract(data,'$.Format') COLLATE NOCASE",
+        ["Bitrate"] = "json_extract(data,'$.Bitrate')",
     };
 
     static SqliteConnection Open(string path)
@@ -79,7 +83,7 @@ public sealed class Store
         return c;
     }
 
-    public void Page(Scope s, IReadOnlyList<Track> rows, string stamp)
+    public void Page(Scope s, IReadOnlyList<Track> rows, string stamp, IReadOnlyDictionary<string,string>? revisions = null)
     {
         using var db = Open(catalog);
         using var tx = db.BeginTransaction();
@@ -113,7 +117,7 @@ public sealed class Store
                 t.Year,
                 t.Duration,
                 JsonSerializer.Serialize(t),
-                stamp,
+                revisions?[t.Id] ?? stamp,
             ];
             for (int i = 0; i < vals.Length; i++)
                 cmd.Parameters[i].Value = vals[i];
@@ -129,6 +133,48 @@ public sealed class Store
             for (int i = 0; i < words.Length; i++)
                 fts.Parameters[i].Value = words[i];
             fts.ExecuteNonQuery();
+        }
+        tx.Commit();
+    }
+
+    public void InvalidateMovedPaths(Scope scope, IReadOnlyList<Track> moved)
+    {
+        using var db = Open(catalog);
+        using var tx = db.BeginTransaction();
+        using var cmd = Sql(db,
+            "UPDATE tracks SET stamp='' WHERE scope=$s AND id=$i AND json_extract(data,'$.Parts[0].File')=$old",
+            ("$s", scope.Key), ("$i", ""), ("$old", ""));
+        foreach (var track in moved)
+        {
+            cmd.Parameters["$i"].Value = track.Id;
+            cmd.Parameters["$old"].Value = track.FilePath;
+            cmd.ExecuteNonQuery();
+        }
+        tx.Commit();
+    }
+
+    public Dictionary<string,string> Revisions(Scope scope)
+    {
+        using var db = Open(catalog);
+        using var cmd = Sql(db, "SELECT id,stamp FROM tracks WHERE scope=$s", ("$s", scope.Key));
+        using var rows = cmd.ExecuteReader();
+        Dictionary<string,string> revisions = [];
+        while (rows.Read()) revisions.Add(rows.GetString(0), rows.GetString(1));
+        return revisions;
+    }
+
+    public void RemoveMissing(Scope scope, Dictionary<string,string> missing, CancellationToken ct)
+    {
+        using var db = Open(catalog);
+        using var tx = db.BeginTransaction();
+        using var cmd = Sql(db, "DELETE FROM tracks WHERE scope=$s AND id=$i AND stamp=$v",
+            ("$s", scope.Key), ("$i", ""), ("$v", ""));
+        foreach (var (id, version) in missing)
+        {
+            ct.ThrowIfCancellationRequested();
+            cmd.Parameters["$i"].Value = id;
+            cmd.Parameters["$v"].Value = version;
+            cmd.ExecuteNonQuery();
         }
         tx.Commit();
     }
@@ -209,7 +255,9 @@ public sealed class Store
         string artist = "",
         string album = "",
         string albumId = "",
-        string artistId = ""
+        string artistId = "",
+        IReadOnlyDictionary<string, Track>? snapshot = null,
+        CancellationToken ct = default
     )
     {
         using var db = Open(catalog);
@@ -233,7 +281,7 @@ public sealed class Store
         string column = Columns.GetValueOrDefault(sort, "title");
         using var cmd = Sql(
             db,
-            $"SELECT data FROM tracks WHERE scope=$s {match} ORDER BY {column} {(descending ? "DESC" : "ASC")},id LIMIT $l OFFSET $o",
+            $"SELECT {(snapshot == null ? "data" : "id")} FROM tracks WHERE scope=$s {match} ORDER BY {column} {(descending ? "DESC" : "ASC")},id LIMIT $l OFFSET $o",
             ("$s", s.Key),
             ("$l", limit),
             ("$o", checked(page * limit))
@@ -253,7 +301,14 @@ public sealed class Store
         using var r = cmd.ExecuteReader();
         List<Track> result = [];
         while (r.Read())
-            result.Add(JsonSerializer.Deserialize<Track>(r.GetString(0))!);
+        {
+            ct.ThrowIfCancellationRequested();
+            var value = r.GetString(0);
+            if (snapshot == null)
+                result.Add(JsonSerializer.Deserialize<Track>(value)!);
+            else if (snapshot.TryGetValue(value, out var track))
+                result.Add(track);
+        }
         return result;
     }
 
@@ -270,6 +325,103 @@ public sealed class Store
         while (reader.Read())
             result.Add(JsonSerializer.Deserialize<Track>(reader.GetString(0))!);
         return result;
+    }
+
+    static string SeedColumn(string kind) => kind switch
+    {
+        "artist" => "json_extract(data,'$.ArtistId')",
+        "album" => "json_extract(data,'$.AlbumId')",
+        _ => throw new ArgumentException("Choose an artist or album mix.")
+    };
+
+    public List<RadioChoice> MixSeeds(Scope scope, string kind)
+    {
+        var column = SeedColumn(kind);
+        var label = kind == "artist" ? "albumArtist" : "album || ' — ' || albumArtist";
+        using var db = Open(catalog);
+        using var cmd = Sql(db, $"SELECT {column}, {label} FROM tracks WHERE scope=$s AND {column}<>'' GROUP BY {column} ORDER BY 2 COLLATE NOCASE", ("$s",scope.Key));
+        using var reader = cmd.ExecuteReader();
+        List<RadioChoice> choices = [];
+        while (reader.Read()) choices.Add(new(reader.GetString(0), reader.GetString(1)));
+        return choices;
+    }
+
+    public List<string> MixTrackIds(Scope scope, string kind, IReadOnlyList<string> seeds)
+    {
+        var column = SeedColumn(kind);
+        var unique = seeds.Distinct().ToArray();
+        if (unique.Length is 0 or > 100) throw new ArgumentException("Choose between 1 and 100 seeds.");
+        using var db = Open(catalog);
+        List<Queue<string>> groups = [];
+        foreach (var seed in unique)
+        {
+            using var cmd = Sql(db, $"SELECT id FROM tracks WHERE scope=$s AND {column}=$seed ORDER BY random() LIMIT 100", ("$s",scope.Key), ("$seed",seed));
+            using var reader = cmd.ExecuteReader();
+            Queue<string> group = new();
+            while (reader.Read()) group.Enqueue(reader.GetString(0));
+            if (group.Count > 0) groups.Add(group);
+        }
+        Random.Shared.Shuffle(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(groups));
+        List<string> result = [];
+        while (result.Count < 100 && groups.Count > 0)
+        {
+            foreach (var group in groups)
+                if (result.Count < 100) result.Add(group.Dequeue());
+            groups.RemoveAll(group => group.Count == 0);
+        }
+        return result;
+    }
+
+    public long Remember(Scope scope, string batch, string name, Change change)
+    {
+        using var db = Open(settings);
+        using var transaction = db.BeginTransaction();
+        using var clear = Sql(db, "DELETE FROM redo WHERE scope=$s", ("$s", scope.Key));
+        clear.ExecuteNonQuery();
+        using var cmd = Sql(db, "INSERT INTO undo(scope,batch,name,data) VALUES($s,$b,$n,$d) RETURNING id",
+            ("$s",scope.Key), ("$b",batch), ("$n",name), ("$d",JsonSerializer.Serialize(change)));
+        var id = Convert.ToInt64(cmd.ExecuteScalar());
+        transaction.Commit();
+        return id;
+    }
+
+    public string? HistoryName(Scope scope, bool redo)
+    {
+        using var db = Open(settings);
+        var table = redo ? "redo" : "undo";
+        using var cmd = Sql(db, $"SELECT name FROM {table} WHERE scope=$s ORDER BY id DESC LIMIT 1", ("$s",scope.Key));
+        return cmd.ExecuteScalar() as string;
+    }
+
+    public List<UndoStep> LastChanges(Scope scope, bool redo = false)
+    {
+        using var db = Open(settings);
+        var table = redo ? "redo" : "undo";
+        using var cmd = Sql(db, $"SELECT id,name,data FROM {table} WHERE scope=$s AND batch=(SELECT batch FROM {table} WHERE scope=$s ORDER BY id DESC LIMIT 1) ORDER BY id DESC", ("$s", scope.Key));
+        using var r = cmd.ExecuteReader();
+        List<UndoStep> steps = [];
+        while (r.Read()) steps.Add(new(r.GetInt64(0), r.GetString(1), JsonSerializer.Deserialize<Change>(r.GetString(2))!));
+        return steps;
+    }
+
+    public void Forget(Scope scope, long id)
+    {
+        using var db = Open(settings);
+        using var cmd = Sql(db, "DELETE FROM undo WHERE scope=$s AND id=$i", ("$s",scope.Key), ("$i",id));
+        cmd.ExecuteNonQuery();
+    }
+
+    public void CompleteChange(Scope scope, UndoStep step, bool redo)
+    {
+        var (source, target) = redo ? ("redo", "undo") : ("undo", "redo");
+        using var db = Open(settings);
+        using var transaction = db.BeginTransaction();
+        using var transfer = Sql(db, $"INSERT INTO {target}(scope,batch,name,data) SELECT scope,batch,name,$d FROM {source} WHERE scope=$s AND id=$i AND data=$old",
+            ("$s", scope.Key), ("$i", step.Id), ("$old", JsonSerializer.Serialize(step.Change)), ("$d", JsonSerializer.Serialize(step.Change.Reverse())));
+        if (transfer.ExecuteNonQuery() != 1) throw new IOException("Change history was updated. Reopen Edit and try again.");
+        using var remove = Sql(db, $"DELETE FROM {source} WHERE scope=$s AND id=$i", ("$s", scope.Key), ("$i", step.Id));
+        remove.ExecuteNonQuery();
+        transaction.Commit();
     }
 
     public string? Get(string scope, string key)

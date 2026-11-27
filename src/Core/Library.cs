@@ -2,46 +2,86 @@ using System.Text.Json.Nodes;
 
 namespace Mixamp.Core;
 
-public sealed class Library(Plex api, Scope scope)
+public sealed partial class Library(Plex api, Scope scope)
 {
     static string E(string value) => Plex.E(value);
 
-    public async Task Sync(Store store, Func<Task> firstPage, CancellationToken ct)
+    // Album edits can change inherited track fields without changing the track timestamp.
+    static string Revision(JsonNode n) => n.Num("updatedAt") == 0 ? "" :
+        System.Text.Json.JsonSerializer.Serialize(new[] { n.Str("updatedAt"), n.Str("title"),
+            n.Str("grandparentTitle"), n.Str("parentTitle"), n.Str("originalTitle"),
+            n.Str("grandparentRatingKey"), n.Str("parentRatingKey"), n.Str("parentIndex"),
+            n.Str("index"), n.Str("year"), n.Str("duration"), n["Genre"]?.ToJsonString() ?? "" });
+
+    public async Task<bool> Sync(Store store, Func<Task> firstPage, CancellationToken ct,
+        Action<int,int,bool>? progress = null)
     {
-        int offset = 0,
-            expected = -1;
-        string stamp = Guid.NewGuid().ToString("N");
+        var missing = await Task.Run(() => store.Revisions(scope), ct);
+        bool incremental = missing.Count > 0, changed = false;
+        bool lightweight = missing.Values.Any(v => v.StartsWith('['));
+        int offset = 0, expected = -1;
+        HashSet<string> seen = [];
+        progress?.Invoke(0, expected, incremental);
         while (true)
         {
-            var n = await api.Call(
-                $"/library/sections/{E(scope.Library)}/all?type=10&sort=id&X-Plex-Container-Start={offset}&X-Plex-Container-Size=256",
-                ct: ct
-            );
-            if (n["offset"] != null && n.Num("offset") != offset)
+            string path = $"/library/sections/{E(scope.Library)}/all?type=10&sort=id&X-Plex-Container-Start={offset}&X-Plex-Container-Size=256";
+            var response = await api.Call(path + (lightweight ? "&excludeElements=Media" : ""), ct: ct);
+            if (response["offset"] != null && response.Num("offset") != offset)
                 throw new IOException("Plex returned a different page.");
-            if (n["totalSize"] != null)
+            if (response["totalSize"] != null)
             {
-                var total = checked((int)n.Num("totalSize"));
+                int total = checked((int)response.Num("totalSize"));
                 if (expected >= 0 && expected != total)
                     throw new IOException("Library changed during sync. Sync again.");
                 expected = total;
             }
-            var page = n.Items("Metadata").Select(Track.Read).ToList();
-            if (page.Any(t => t.Id == "") || (page.Count == 0 && expected > offset))
+            var page = response.Items("Metadata").ToArray();
+            var ids = page.Select(n => n.Str("ratingKey")).ToArray();
+            if (ids.Any(id => id.Length == 0 || !seen.Add(id)) || page.Length == 0 && expected > offset)
                 throw new IOException("Incomplete Plex page.");
-            ct.ThrowIfCancellationRequested();
-            await Task.Run(() => store.Page(scope, page, stamp), ct);
-            if (offset == 0)
-                await firstPage();
-            offset += page.Count;
-            if (page.Count == 0 || offset == expected)
-                break;
-            if (expected >= 0 && offset > expected || expected < 0 && n["offset"] == null)
+            bool NeedsFull(JsonNode n) => !missing.TryGetValue(n.Str("ratingKey"), out var prior)
+                || n.Num("updatedAt") == 0 || Revision(n) != prior;
+            if (lightweight && page.Any(NeedsFull) && page.Any(n => n["Media"] == null))
+            {
+                var full = await api.Call(path, ct: ct);
+                page = full.Items("Metadata").ToArray();
+                if (!page.Select(n => n.Str("ratingKey")).SequenceEqual(ids))
+                    throw new IOException("Library changed during sync. Sync again.");
+            }
+            Dictionary<string,string> revisions = [];
+            List<Track> updates = [];
+            foreach (var n in page)
+            {
+                string id = n.Str("ratingKey"), version = Revision(n);
+                missing.Remove(id, out var prior);
+                if (version.Length > 0 && version == prior) continue;
+                var track = Track.Read(n);
+                if (version.Length == 0)
+                    version = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                        System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(track)));
+                if (version == prior) continue;
+                updates.Add(track);
+                revisions.Add(id, version);
+            }
+            if (updates.Count > 0)
+            {
+                await Task.Run(() => store.Page(scope, updates, "", revisions), ct);
+                changed = true;
+            }
+            if (offset == 0) await firstPage();
+            offset += page.Length;
+            progress?.Invoke(offset, expected, incremental);
+            if (page.Length == 0 || offset == expected) break;
+            if (expected >= 0 && offset > expected || expected < 0 && response["offset"] == null)
                 throw new IOException("Server pagination could not be verified.");
         }
         ct.ThrowIfCancellationRequested();
-        if (expected >= 0 && !await Task.Run(() => store.Complete(scope, stamp, expected), ct))
-            throw new IOException("Catalog changed during sync. Cached tracks retained.");
+        if (expected == seen.Count && missing.Count > 0)
+        {
+            await Task.Run(() => store.RemoveMissing(scope, missing, ct), ct);
+            changed = true;
+        }
+        return changed;
     }
 
     async Task<List<Track>> WholeAlbum(string path)
@@ -163,11 +203,20 @@ public sealed class Library(Plex api, Scope scope)
                     .ToList()
                     ?? [];
         }
-        var hubs = await api.Call("/hubs/sections/" + E(scope.Library) + "?includeStations=1");
-        return hubs.Items("Hub")
-            .Where(h => h.Str("context") == "hub.music.stations")
-            .SelectMany(h => h.Items("Metadata"))
-            .ToList();
+        var hubs = await api.Call("/hubs/sections/" + E(scope.Library) + "?includeStations=1&count=100");
+        List<JsonNode> entries = [];
+        foreach (var hub in hubs.Items("Hub").Where(h => h.Str("context") == "hub.music.stations" || h.Str("hubIdentifier").StartsWith("music.stations")))
+        {
+            var items = hub;
+            if (hub.Num("more") == 1 && hub.Str("key").StartsWith('/')) items = await api.Call(hub.Str("key"));
+            entries.AddRange(items.Items("Metadata"));
+            foreach (var folder in items.Items("Directory"))
+            {
+                folder["directory"] = "1";
+                entries.Add(folder);
+            }
+        }
+        return entries;
     }
 
     string ServerUri(string path) =>
@@ -191,6 +240,12 @@ public sealed class Library(Plex api, Scope scope)
             ? api.Call($"/playlists?type=audio&smart=0&title={E(name)}&uri={uri}", HttpMethod.Post)
             : api.Call($"/playlists/{E(id)}/items?uri={uri}", HttpMethod.Put);
     }
+
+    public Task<JsonNode> CreatePlaylist(string name) =>
+        api.Call($"/playlists?type=audio&smart=0&title={E(name)}", HttpMethod.Post);
+
+    public Task<JsonNode> DeletePlaylist(string id) =>
+        api.Call($"/playlists/{E(id)}", HttpMethod.Delete);
 
     public Task<JsonNode> Move(string id, string entry, string after) =>
         api.Call($"/playlists/{E(id)}/items/{E(entry)}/move?after={E(after)}", HttpMethod.Put);

@@ -168,6 +168,20 @@ public sealed class Plex : IDisposable
         return node;
     }
 
+    public async Task CopyOriginal(string key, Stream destination, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, Resolve(key));
+        request.Headers.Accept.ParseAdd("*/*");
+        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        response.EnsureSuccessStatusCode();
+        if (response.StatusCode != HttpStatusCode.OK)
+            throw new IOException("Plex did not return the complete original audio file.");
+        await using var source = await response.Content.ReadAsStreamAsync(ct);
+        await source.CopyToAsync(destination, ct);
+        if (destination.Length == 0 || response.Content.Headers.ContentLength is long size && size != destination.Length)
+            throw new IOException("The original audio download was incomplete.");
+    }
+
     public async Task<(byte[] Data, long Size)> Range(
         string key,
         long start,
@@ -180,6 +194,7 @@ public sealed class Plex : IDisposable
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(TimeSpan.FromSeconds(20));
         ct = deadline.Token;
+        req.Headers.Accept.ParseAdd("*/*");
         req.Headers.Range = new RangeHeaderValue(start, checked(start + count - 1));
         using var res = await client
             .SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct)

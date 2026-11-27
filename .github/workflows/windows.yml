@@ -1,6 +1,7 @@
-name: Windows release and fixture checks
+name: Desktop builds and releases
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -12,8 +13,6 @@ permissions:
   contents: read
 jobs:
   package:
-    permissions:
-      contents: write
     runs-on: windows-2025
     timeout-minutes: 20
     steps:
@@ -33,9 +32,30 @@ jobs:
       - if: github.event_name == 'workflow_dispatch' && inputs.smbFixture
         shell: pwsh
         run: ./tools/test-smb.ps1
-      - name: Publish tested Windows release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        shell: bash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Mixamp-Windows
+          path: artifacts/Mixamp-win-x64.zip
+  macos:
+    uses: ./.github/workflows/macos.yml
+  release:
+    needs: [package, macos]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Mixamp-*
+          path: dist
+          merge-multiple: true
+      - name: Publish the desktop packages for a new version
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "build-${GITHUB_RUN_NUMBER}" artifacts/Mixamp-win-x64.zip --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Mixamp build ${GITHUB_RUN_NUMBER}" --generate-notes
+        run: |
+          version=$(python3 -c 'import xml.etree.ElementTree as ET; print(ET.parse("Directory.Build.props").findtext("./PropertyGroup/Version"))')
+          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then exit 0; fi
+          gh release create "v$version" dist/Mixamp-win-x64.zip dist/Mixamp-osx-arm64.zip dist/Mixamp-osx-x64.zip \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Mixamp $version" --generate-notes

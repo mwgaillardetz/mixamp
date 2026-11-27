@@ -1,1 +1,1 @@
-<Project><PropertyGroup><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings><RestorePackagesWithLockFile>true</RestorePackagesWithLockFile><EnableWindowsTargeting>true</EnableWindowsTargeting></PropertyGroup></Project>
+<Project><PropertyGroup><Version>1.0</Version><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings><RestorePackagesWithLockFile>true</RestorePackagesWithLockFile><EnableWindowsTargeting>true</EnableWindowsTargeting></PropertyGroup></Project>

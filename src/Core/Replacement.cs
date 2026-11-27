@@ -49,13 +49,15 @@ public sealed class Replacement(Store store, Scope scope, string id)
         string before,
         string temp,
         string change,
-        Action<string, string, string>? replace = null
+        Action<string, string, string>? replace = null,
+        Action<string,string>? recordBackup = null
     )
     {
         var entry = new Entry(path, before, Digest(temp), temp, temp + ".bak", change);
         if (Digest(path) != before)
             throw new IOException("Source changed during staging.");
         store.Set(scope.Key, Key, JsonSerializer.Serialize(entry));
+        recordBackup?.Invoke(entry.Backup, entry.After);
         (replace ?? ((source, target, backup) => File.Replace(source, target, backup, false)))(
             temp,
             path,

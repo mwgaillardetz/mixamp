@@ -9,7 +9,15 @@ public record Mapping(string ServerRoot, string Share);
 
 public static class MappedFiles
 {
-    public static string Resolve(string serverPath, IEnumerable<Mapping> mappings)
+    public static Mapping Match(string serverPath, IEnumerable<Mapping> mappings) =>
+        mappings
+            .OrderByDescending(x => x.ServerRoot.TrimEnd('/').Length)
+            .FirstOrDefault(x =>
+                serverPath.StartsWith(x.ServerRoot.TrimEnd('/') + "/", StringComparison.Ordinal)
+            )
+            ?? throw new IOException("No matching Plex root mapping.");
+
+    public static string Resolve(string serverPath, IEnumerable<Mapping> mappings, bool allowMissing = false)
     {
         if (!serverPath.StartsWith('/') || serverPath.Contains('\\'))
             throw new IOException("Expected an absolute Linux part path.");
@@ -28,12 +36,7 @@ public static class MappedFiles
             )
         )
             throw new IOException("Unsafe or ambiguous path component.");
-        var m = mappings
-            .OrderByDescending(x => x.ServerRoot.TrimEnd('/').Length)
-            .FirstOrDefault(x =>
-                serverPath.StartsWith(x.ServerRoot.TrimEnd('/') + "/", StringComparison.Ordinal)
-            )
-            ?? throw new IOException("No matching Plex root mapping.");
+        var m = Match(serverPath, mappings);
         if (
             !OperatingSystem.IsWindows()
             || !m.Share.StartsWith(@"\\")
@@ -53,8 +56,15 @@ public static class MappedFiles
         if (!path.StartsWith(root + "\\", StringComparison.OrdinalIgnoreCase))
             throw new IOException("Path leaves the configured root.");
         for (string? p = path; p != null; p = Path.GetDirectoryName(p))
-            if ((File.GetAttributes(p) & FileAttributes.ReparsePoint) != 0)
-                throw new IOException("Links and junctions are read-only.");
+        {
+            try
+            {
+                if ((File.GetAttributes(p) & FileAttributes.ReparsePoint) != 0)
+                    throw new IOException("Links and junctions are read-only.");
+            }
+            catch (IOException ex) when (allowMissing && p.Length > root.Length
+                && ex is FileNotFoundException or DirectoryNotFoundException) { }
+        }
         return path;
     }
 }

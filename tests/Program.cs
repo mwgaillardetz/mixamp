@@ -49,6 +49,64 @@ try
             [new(i.ToString(), "/part/" + i, "/demo/" + i + ".flac", 12345, "flac")]
         );
     var track = Make(1);
+    Check(ToneProfile.Choose("Auto","Jazz, Blues") == ToneProfile.Warm &&
+        ToneProfile.Choose("Auto","Jazz; House") == ToneProfile.Flat && ToneProfile.Choose("Auto","") == ToneProfile.Flat &&
+        ToneProfile.Choose("Auto","Unclassified") == ToneProfile.Flat && ToneProfile.Choose("Punch","") == ToneProfile.Punch,
+        "auto EQ selects compatible tags, ambiguous and missing tags stay flat, manual override works");
+    Check(Mixamp.ArtistOrganizer.Destination(track, new Mapping("/demo", ""), "AC/DC") == "/demo/AC_DC/Album 1/1.flac",
+        "artist layout keeps album and filename, sanitizes separator");
+    if (args.Contains("--artist-move"))
+    {
+        var unc = @"\\localhost\" + dir.FullName[0] + "$" + dir.FullName[2..];
+        var maps = new[] { new Mapping("/demo", unc) };
+        var source = Path.Combine(dir.FullName, "1.flac");
+        var bytes = new byte[track.Parts[0].Size];
+        Random.Shared.NextBytes(bytes);
+        File.WriteAllBytes(source, bytes);
+        var plan = Mixamp.ArtistOrganizer.Plan(track, maps, track.Artist);
+        Directory.CreateDirectory(Path.GetDirectoryName(plan.Destination)!);
+        File.WriteAllText(plan.Destination, "existing");
+        Reject(() => Mixamp.ArtistOrganizer.Move(plan, maps), "artist move never overwrites an existing file");
+        Check(File.Exists(source) && File.ReadAllText(plan.Destination) == "existing", "collision retains both files");
+        File.Delete(plan.Destination);
+        var secondPlan = Mixamp.ArtistOrganizer.Plan(track, maps, "New artist");
+        Mixamp.ArtistOrganizer.Move(secondPlan, maps);
+        Check(!File.Exists(source) && File.ReadAllBytes(secondPlan.Destination).SequenceEqual(bytes),
+            "verified SMB move into newly created artist and album directories");
+        var hash = Replacement.Digest(secondPlan.Destination);
+        var entry = new Change(track, "Move", track.FilePath, secondPlan.ServerDestination, hash, hash,
+            secondPlan.Source, secondPlan.Destination);
+        store.Remember(scope,"test batch","Organize files by artist",entry);
+        File.WriteAllText(source,"occupied");
+        Reject(() => Mixamp.ArtistOrganizer.RestoreFile(entry,maps),"undo protects occupied original path");
+        File.Delete(source);
+        var reopened = new Store(dir.FullName);
+        void ReplayMove(bool redo)
+        {
+            var step = reopened.LastChanges(scope, redo).Single();
+            Mixamp.ArtistOrganizer.RestoreFile(step.Change,maps);
+            reopened.CompleteChange(scope,step,redo);
+        }
+        ReplayMove(false);
+        Check(File.ReadAllBytes(source).SequenceEqual(bytes) && !File.Exists(secondPlan.Destination) &&
+            store.LastChanges(scope).Count==0, "persistent undo restores move");
+        ReplayMove(true);
+        Check(!File.Exists(source) && File.ReadAllBytes(secondPlan.Destination).SequenceEqual(bytes), "redo reapplies physical move");
+        ReplayMove(false);
+        var backup = Path.Combine(Path.GetDirectoryName(secondPlan.Source)!, "fixture.bak");
+        File.Copy(secondPlan.Source, backup);
+        File.WriteAllText(secondPlan.Source, "modified tags fixture");
+        var tagChange = new Change(track, "Tags", track.FilePath, backup, hash,
+            Replacement.Digest(secondPlan.Source), secondPlan.Source);
+        Mixamp.ArtistOrganizer.RestoreFile(tagChange, maps);
+        Check(File.ReadAllBytes(source).SequenceEqual(bytes), "tag undo restores verified backup on SMB");
+        Mixamp.ArtistOrganizer.RestoreFile(tagChange.Reverse(), maps);
+        Check(File.ReadAllText(source) == "modified tags fixture", "redo restores edited tags");
+        Mixamp.ArtistOrganizer.RestoreFile(tagChange.Reverse().Reverse(), maps);
+        Check(File.ReadAllBytes(source).SequenceEqual(bytes), "repeated tag undo retains both versions");
+    }
+
+    Check(Cue.Format(248999) == "4:08" && Cue.Format(3600100) == "60:00", "display whole minutes and seconds");
     var cue = new Cue(Cue.Parse("0:42"), Cue.Parse("4:08"));
     cue.Validate(track.Duration);
     Check(
@@ -72,6 +130,21 @@ try
         "FTS update removes old words"
     );
     var other = scope with { Server = "other" };
+    var history = scope with { Library = "history" };
+    var firstChange = new Change(track,"Title","","","first","second");
+    store.Remember(history,"batch","Rename",firstChange);
+    store.Remember(history,"batch","Rename",firstChange with { Before="second", After="third" });
+    foreach (var step in store.LastChanges(history)) store.CompleteChange(history,step,false);
+    Check(new Store(dir.FullName).LastChanges(history,true).Select(x=>x.Change.Before).SequenceEqual(["second","third"]),
+        "redo survives restart and replays the batch in forward order");
+    store.Remember(history,"new","Rename",firstChange);
+    Check(store.LastChanges(history,true).Count==0,"a new edit clears that library's redo branch");
+    var mixes = scope with { Library = "mix" };
+    store.Page(mixes,[track,Make(2),Make(3) with {ArtistId="h",Artist="Another artist"}],"mix");
+    var seedIds = store.MixSeeds(mixes,"artist").Select(x=>x.Id).ToList();
+    var mix = store.MixTrackIds(mixes,"artist",seedIds);
+    Check(seedIds.Count==2 && mix.Count==3 && mix.Take(2).Contains("3") && mix.Distinct().Count()==3,
+        "artist mix includes each chosen artist before repeating a seed");
     store.Page(other, [track], "a");
     Check(store.Search(other, "Changed").Count == 0, "server isolation");
     store.Complete(scope, "b", 1);
@@ -277,6 +350,7 @@ try
             default
         );
         Check(first > 0, "first page callback during sync");
+        Check(!await library.Sync(store, () => Task.CompletedTask, default), "unchanged scan skips catalog writes");
         var t = await api.Fresh("1");
         var part = t.Parts.Single();
         var stream = new RangeStream(api, part.Key, part.Size);
@@ -292,6 +366,15 @@ try
             "write title and reread through Plex adapter"
         );
         var station = (await library.Stations(null)).Single();
+        var offers = await library.RadioStations();
+        var genre = offers.Single(o=>o.Name=="Genre Radio");
+        var jazz = (await library.RadioChoices(genre,store)).Single();
+        Check((await library.StartRadio(genre,[jazz.Id],store)).Items("Metadata").Any(), "server-advertised genre starts a filtered queue");
+        var builder = offers.Single(o=>o.Name=="Album Mix Builder");
+        var albums = await library.RadioChoices(builder,store);
+        var mixed = (await library.StartRadio(builder,albums.Select(a=>a.Id).ToList(),store)).Items("Metadata").Select(Track.Read).ToArray();
+        Check(mixed.Length>1 && mixed.Take(albums.Count).Select(t=>t.AlbumId).Distinct().Count()==albums.Count,
+            "Plex mix queue preserves interleaved seed recordings");
         var queue = await library.StationQueue(station.Str("key"));
         var firstBatch = queue.Items("Metadata").Select(Track.Read).ToArray();
         var more = await library.ContinueQueue(queue.Str("playQueueID"), firstBatch[^1].QueueItem);
@@ -300,6 +383,10 @@ try
                 && more.Items("Metadata").Last().Str("playQueueItemID") != firstBatch[^1].QueueItem,
             "station continuation and repeated recording identity"
         );
+        var empty = (await library.CreatePlaylist("Empty")).Items("Metadata").Single().Str("ratingKey");
+        Check(!(await library.PlaylistItems(empty)).Items("Metadata").Any(), "create an empty playlist");
+        await library.DeletePlaylist(empty);
+        Check(!(await library.Playlists()).Any(p => p.Str("ratingKey") == empty), "remove whole playlist");
         var pl = (await library.AddToPlaylist(null, "Fixture playlist", t))
             .Items("Metadata")
             .Single()
@@ -318,6 +405,8 @@ try
                 && (await api.Fresh("1")).Parts.Length == 1,
             "playlist removal retains source"
         );
+        Check(await library.Sync(store, () => Task.CompletedTask, default)
+            && store.Search(scope, "Edited fixture").Any(row => row.Id == t.Id), "incremental track edit");
         var deletion = new Deletion(api, new Scope("demo", "mixamp-demo", "1"), true);
         long submitted = (await api.Call("/fixture/deletes")).Num("count");
         var review = await deletion.Review("4");
@@ -330,6 +419,8 @@ try
             (await api.Call("/fixture/deletes")).Num("count") == submitted + 1,
             "exactly one deletion request after lost acknowledgement"
         );
+        Check(await library.Sync(store, () => Task.CompletedTask, default)
+            && !store.Revisions(scope).ContainsKey("4"), "incremental removal after complete scan");
         try
         {
             await api.Range("/parts/4", 0, 1, null, default);

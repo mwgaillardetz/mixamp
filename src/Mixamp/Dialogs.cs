@@ -53,6 +53,28 @@ static class Dialogs
         return list.SelectedIndex;
     }
 
+    public static bool Review(string title, string summary, IEnumerable<string> entries, string? action)
+    {
+        var panel = new StackPanel { Margin = new Thickness(16) };
+        panel.Children.Add(new TextBlock { Text = summary, TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0,0,0,10) });
+        panel.Children.Add(new ListBox { ItemsSource = entries.ToArray(), MaxHeight = 330, MinHeight = 80 });
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0,12,0,0) };
+        panel.Children.Add(buttons);
+        var window = Window(title, panel, 740);
+        var cancel = new Button { Content = action == null ? "Close" : "Cancel", IsCancel = true,
+            MinWidth = 82, Margin = new Thickness(4) };
+        buttons.Children.Add(cancel);
+        if (action != null)
+        {
+            var commit = new Button { Content = action, Padding = new Thickness(12,4,12,4), Margin = new Thickness(4) };
+            commit.Click += (_, _) => window.DialogResult = true;
+            buttons.Children.Add(commit);
+        }
+        return window.ShowDialog() == true;
+    }
+
     public static string Input(string title, string current = "")
     {
         var p = new StackPanel { Margin = new Thickness(16) };

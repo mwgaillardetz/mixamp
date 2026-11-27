@@ -29,6 +29,15 @@ public partial class MainWindow
                 if (!Search.Focus() || Songs.SelectedItem == null)
                     throw new IOException("Library did not accept focus and selection.");
                 raw.Add(new { launchMs = (DateTime.Now - process.StartTime).TotalMilliseconds });
+                if (phase == "launch")
+                {
+                    Songs.ScrollIntoView(Songs.Items[^1]);
+                    Songs.UpdateLayout();
+                    var panel = FindChild<System.Windows.Controls.Primitives.DataGridRowsPresenter>(Songs);
+                    if (Songs.ItemContainerGenerator.ContainerFromIndex(Songs.Items.Count - 1) == null)
+                        throw new IOException("The last library track could not be displayed.");
+                    raw.Add(new { tracks = Songs.Items.Count, realizedRows = panel?.Children.Count });
+                }
                 if (phase == "query")
                 {
                     for (int i = 0; i < 120; i++)
@@ -80,7 +89,7 @@ public partial class MainWindow
                 }
                 if (phase.StartsWith("scroll-", StringComparison.Ordinal))
                 {
-                    Apply(phase == "scroll-amp" ? "Midnight Amp" : "Silver Library");
+                    Apply(phase == "scroll-amp" ? "Bitstream 98" : "Silver Halide");
                     var syncing = vm.Run("Demo");
                     while (vm.Status != "Syncing music library…" && !syncing.IsCompleted)
                         await Task.Delay(20);
@@ -105,11 +114,7 @@ public partial class MainWindow
                         if (frames.Count % 30 == 0)
                             maxRows = Math.Max(
                                 maxRows,
-                                Enumerable
-                                    .Range(0, Songs.Items.Count)
-                                    .Count(i =>
-                                        Songs.ItemContainerGenerator.ContainerFromIndex(i) != null
-                                    )
+                                FindChild<System.Windows.Controls.Primitives.DataGridRowsPresenter>(Songs)?.Children.Count ?? 0
                             );
                     }
                     CompositionTarget.Rendering += Frame;
@@ -191,7 +196,7 @@ public partial class MainWindow
             if ((await api.Call("/identity")).Str("machineIdentifier") != "mixamp-demo")
                 throw new IOException("Expected the loopback fixture.");
             var t = await api.Fresh("1");
-            if (route is not ("http" or "local"))
+            if (route is not ("http" or "local" or "direct-check"))
                 throw new ArgumentException("Use http or local.");
             var completed = new TaskCompletionSource(
                 TaskCreationOptions.RunContinuationsAsynchronously
@@ -203,7 +208,7 @@ public partial class MainWindow
             };
             engine.Failed += m => completed.TrySetException(new IOException(m));
             var scope = new Scope("demo", "mixamp-demo", "1");
-            vm.Store.SaveCue(scope, t, new Cue(42000, 248000));
+            vm.Store.SaveCue(scope, t, route == "direct-check" ? new Cue() : new Cue(42000, 248000));
             await engine.Start(
                 t,
                 vm.Store.ReadCue(scope, t),
@@ -211,17 +216,18 @@ public partial class MainWindow
                 route == "local" ? new Uri(Path.GetFullPath(file)) : null,
                 default
             );
-            var timeout = Task.Delay(TimeSpan.FromSeconds(235));
+            var timeout = Task.Delay(TimeSpan.FromSeconds(route == "direct-check" ? 10 : 235));
             while (!completed.Task.IsCompleted)
             {
                 if (timeout.IsCompleted)
                     throw new TimeoutException("Media completion timed out.");
                 times.Add(engine.Position);
+                if (route == "direct-check" && engine.Playing && engine.Position >= 750) break;
                 await Task.Delay(100);
             }
-            await completed.Task;
+            if (route != "direct-check" || completed.Task.IsCompleted) await completed.Task;
             await Task.Delay(300);
-            if (ends != 1)
+            if (route != "direct-check" && ends != 1)
                 throw new IOException("Unexpected completion count.");
         }
         catch (Exception ex)
@@ -234,7 +240,7 @@ public partial class MainWindow
                 new
                 {
                     route,
-                    engine.Route,
+                    playbackRoute = engine.Route,
                     ends,
                     error,
                     positionSamplesMs = times,
@@ -252,13 +258,52 @@ public partial class MainWindow
             await vm.Run("Demo");
             if (Songs.Items.Count == 0)
                 throw new IOException("No demo rows realized.");
+            await vm.Run("Radio");
+            if (!RadioPane.IsVisible || Songs.IsVisible || !StationList.Children.OfType<Button>().Any(b => Equals(b.Content, "Artist Mix Builder")))
+                throw new IOException("Radio navigation did not open the station browser.");
+            await OpenRadioChoices(vm.Stations.Single(s => s.Kind == "artist"));
+            RadioChoicesList.SelectedIndex = 0;
+            AddSeed.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            if (!PlayStation.IsEnabled || mixSeeds.Count != 1) throw new IOException("Artist selection failed.");
+            BackToRadio(this, new RoutedEventArgs());
+            await vm.Run("Songs");
+            Songs.UpdateLayout();
+            var header = FindChild<System.Windows.Controls.Primitives.DataGridColumnHeader>(Songs);
+            var picker = header?.ContextMenu ?? throw new IOException("Column picker is missing.");
+            var path = Songs.Columns.Single(c => c.SortMemberPath == nameof(Track.FilePath));
+            var toggle = picker.Items.Cast<MenuItem>().Single(m => Equals(m.Header, path.Header));
+            toggle.IsChecked = true;
+            toggle.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            if (path.Visibility != Visibility.Visible)
+                throw new IOException("File path column did not appear.");
+            await vm.Sort(nameof(Track.FilePath));
+            if (!vm.Rows.Select(t => t.FilePath).SequenceEqual(vm.Rows.Select(t => t.FilePath)
+                    .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)))
+                throw new IOException("Library file path ordering failed.");
+            toggle.IsChecked = false;
+            toggle.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            await vm.Sort(nameof(Track.Title));
+            var libraryMenu = (MenuItem)Menus.Items[0];
+            var visualizer = libraryMenu.Items.Cast<MenuItem>().Single(m => Equals(m.Header, "Visualizer"));
+            foreach (bool enabled in new[] { true, false })
+            {
+                visualizer.IsChecked = enabled;
+                visualizer.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                UpdateLayout();
+                if (Levels.IsVisible != enabled)
+                    throw new IOException("Visualizer visibility did not follow the Library menu.");
+            }
             Songs.SelectedIndex = 0;
             Songs.Focus();
             await vm.Run("Add to Queue");
             var selected = Songs.SelectedItem;
-            foreach (string name in Themes)
+            foreach (MenuItem option in themeMenu.Items)
             {
-                Apply(name);
+                var name = (string)option.Header;
+                option.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+                if (theme != name || !option.IsChecked || themeMenu.Items.OfType<MenuItem>().Count(m => m.IsChecked) != 1 ||
+                    vm.Store.Get("installation", "theme") != name)
+                    throw new IOException("Theme menu failed to apply and save " + name);
                 UpdateLayout();
                 await Dispatcher.InvokeAsync(
                     () => { },
@@ -282,6 +327,18 @@ public partial class MainWindow
             }
             var selectedTrack = (Mixamp.Core.Track)selected;
             await ExerciseEditor(selectedTrack);
+            var scroll = VisualChildren<System.Windows.Controls.Primitives.ScrollBar>(Songs)
+                .First(bar => bar.IsVisible && bar.Orientation == Orientation.Vertical);
+            if (scroll.Template.FindName("grip",scroll) is not System.Windows.Controls.Primitives.Thumb)
+                throw new IOException("The grid did not use the theme scrollbar.");
+            await vm.Run("Radio");
+            await vm.PlayRadio(vm.Stations.First(s => s.Kind == "station"), []);
+            UpdateLayout();
+            if (!QueueBack.IsVisible || !Songs.IsVisible || Songs.Items.Count == 0 || !ReferenceEquals(vm.Rows,vm.Queue))
+                throw new IOException("Starting a station did not open the live queue.");
+            await vm.Run("Radio");
+            if (!RadioPane.IsVisible || QueueBack.IsVisible || vm.Queue.Count == 0)
+                throw new IOException("Returning to stations lost the queue.");
             Application.Current.Shutdown(0);
         }
         catch (Exception ex)

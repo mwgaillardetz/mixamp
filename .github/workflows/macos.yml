@@ -1,0 +1,44 @@
+name: macOS packages and launch check
+on: [workflow_call, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: python3 tools/package-mac.py
+      - name: Run the packaged library service on macOS
+        shell: bash
+        run: |
+          case "$(uname -m)" in
+            arm64) rid=osx-arm64 ;;
+            x86_64) rid=osx-x64 ;;
+            *) exit 1 ;;
+          esac
+          ditto -x -k "artifacts/Mixamp-$rid.zip" "$RUNNER_TEMP"
+          app="$RUNNER_TEMP/Mixamp.app"
+          codesign --verify --deep --strict "$app"
+          "$app/Contents/MacOS/Mixamp" --fixture-host "$RUNNER_TEMP/profile" > "$RUNNER_TEMP/service.log" &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          for i in {1..60}; do
+            kill -0 "$pid" || exit 1
+            url=$(awk '/^http:\/\/127\.0\.0\.1:/{print;exit}' "$RUNNER_TEMP/service.log")
+            [[ -n "$url" ]] && break
+            sleep 1
+          done
+          test -n "$url"
+          origin=${url%/launch/*}
+          curl -fsSL -c "$RUNNER_TEMP/cookies" -b "$RUNNER_TEMP/cookies" "$url" -o "$RUNNER_TEMP/window.html"
+          curl -fsS -b "$RUNNER_TEMP/cookies" -H "Origin: $origin" -H 'X-Mixamp: app' \
+            -H 'Content-Type: application/json' -d '{"action":"config"}' "$origin/command" |
+            python3 -c 'import json, sys; assert json.load(sys.stdin)["eq"] == "Auto"'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Mixamp-macOS
+          path: artifacts/Mixamp-osx-*.zip

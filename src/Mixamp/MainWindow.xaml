@@ -1,38 +1,110 @@
-<Window x:Class="Mixamp.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Mixamp" Width="1100" Height="710" MinWidth="640" MinHeight="260" Background="{DynamicResource Canvas}" Foreground="{DynamicResource Ink}" FontFamily="Segoe UI" PreviewKeyDown="Keys">
+<Window x:Class="Mixamp.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:local="clr-namespace:Mixamp" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Mixamp" Width="1100" Height="710" MinWidth="640" MinHeight="260" Background="{DynamicResource Canvas}" Foreground="{DynamicResource Ink}" UseLayoutRounding="True" FontFamily="Segoe UI" PreviewKeyDown="Keys">
  <Window.Resources>
+  <BooleanToVisibilityConverter x:Key="VisibleWhenTrue"/>
   <Style x:Key="Key" TargetType="Button">
    <Setter Property="Background" Value="{DynamicResource Paper}"/><Setter Property="Foreground" Value="{DynamicResource Ink}"/><Setter Property="BorderBrush" Value="{DynamicResource Line}"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Padding" Value="12,6"/><Setter Property="Margin" Value="2"/><Setter Property="Template"><Setter.Value>
    <ControlTemplate TargetType="Button"><Border x:Name="rim" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="3" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="rim" Property="Background" Value="{DynamicResource Tint}"/></Trigger><Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="rim" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger><Trigger Property="IsPressed" Value="True"><Setter TargetName="rim" Property="Opacity" Value=".7"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style x:Key="Navigation" TargetType="Button">
+   <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+    <Border x:Name="row" Background="Transparent" BorderThickness="3,0,0,0" BorderBrush="Transparent" Padding="10,7" Margin="0,1">
+     <StackPanel Orientation="Horizontal"><TextBlock Text="{TemplateBinding Tag}" FontFamily="Segoe MDL2 Assets" FontSize="15" VerticalAlignment="Center" Margin="0,0,11,0"/><ContentPresenter VerticalAlignment="Center"/></StackPanel>
+    </Border>
+    <ControlTemplate.Triggers>
+     <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="row" Property="Background" Value="{DynamicResource Tint}"/></Trigger>
+     <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="row" Property="BorderBrush" Value="{DynamicResource Muted}"/></Trigger>
+     <Trigger Property="FontWeight" Value="SemiBold"><Setter TargetName="row" Property="BorderBrush" Value="{DynamicResource Accent}"/><Setter TargetName="row" Property="Background" Value="{DynamicResource Tint}"/></Trigger>
+     <Trigger Property="IsEnabled" Value="False"><Setter TargetName="row" Property="Opacity" Value=".5"/></Trigger>
+    </ControlTemplate.Triggers>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <DrawingBrush x:Key="TitleStripes" TileMode="Tile" Viewport="0,0,4,4" ViewportUnits="Absolute" Viewbox="0,0,4,4" ViewboxUnits="Absolute">
+   <DrawingBrush.Drawing><DrawingGroup>
+    <GeometryDrawing Brush="#27273B" Geometry="M0,0 H4 V4 H0 Z"/>
+    <GeometryDrawing Brush="#9494AB" Geometry="M0,0 H4 V1 H0 Z"/>
+    <GeometryDrawing Brush="#4E4D67" Geometry="M0,1 H4 V2 H0 Z"/>
+   </DrawingGroup></DrawingBrush.Drawing>
+  </DrawingBrush>
+  <Style x:Key="MetalKey" TargetType="Button">
+   <Setter Property="Width" Value="35"/><Setter Property="Height" Value="25"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+    <Border Background="#11121A" Padding="0,0,2,2"><Border x:Name="bevel" BorderThickness="2,2,1,1" BorderBrush="#DCDCE5" Background="#868795">
+     <Border BorderThickness="0,0,2,2" BorderBrush="#47495E"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+    </Border></Border>
+    <ControlTemplate.Triggers><Trigger Property="IsPressed" Value="True"><Setter TargetName="bevel" Property="Background" Value="#656578"/></Trigger>
+    <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="bevel" Property="BorderBrush" Value="#F6C756"/></Trigger></ControlTemplate.Triggers>
+   </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style x:Key="MetalFader" TargetType="Slider">
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Slider">
+    <Grid MinHeight="15"><Border Background="#12131C" BorderThickness="1,1,0,0" BorderBrush="#030308" Height="6" VerticalAlignment="Center"/>
+     <Track x:Name="PART_Track" Height="12" VerticalAlignment="Center">
+      <Track.DecreaseRepeatButton><RepeatButton Command="Slider.DecreaseLarge" Opacity="0" Focusable="False"/></Track.DecreaseRepeatButton>
+      <Track.IncreaseRepeatButton><RepeatButton Command="Slider.IncreaseLarge" Opacity="0" Focusable="False"/></Track.IncreaseRepeatButton>
+      <Track.Thumb><Thumb Width="13"><Thumb.Template><ControlTemplate TargetType="Thumb"><Border Background="#CB9A41" BorderBrush="#FFE8A5" BorderThickness="1,1,0,0"><Border BorderBrush="#6B4D24" BorderThickness="0,0,2,2"><Rectangle Width="2" Height="5" Fill="#5A4027"/></Border></Border></ControlTemplate></Thumb.Template></Thumb></Track.Thumb>
+     </Track></Grid>
+   </ControlTemplate></Setter.Value></Setter>
   </Style>
   <Style TargetType="DataGridColumnHeader"><Setter Property="Background" Value="{DynamicResource Side}"/><Setter Property="Foreground" Value="{DynamicResource Muted}"/><Setter Property="Padding" Value="7,5"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="BorderThickness" Value="0,0,1,1"/><Setter Property="BorderBrush" Value="{DynamicResource Line}"/></Style>
  </Window.Resources>
  <DockPanel Background="{DynamicResource Canvas}">
   <Menu DockPanel.Dock="Top" x:Name="Menus"/>
-  <Border DockPanel.Dock="Top" Background="{DynamicResource Deck}" Padding="12,9" BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,1">
-   <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-     <Button Style="{StaticResource Key}" Command="{Binding Action}" CommandParameter="Previous" AutomationProperties.Name="Previous" ToolTip="Previous"><Path Fill="{DynamicResource Ink}" Data="M0,0 H2 V12 H0 Z M12,0 L3,6 L12,12 Z"/></Button>
-     <Button Style="{StaticResource Key}" Command="{Binding Action}" CommandParameter="Toggle" AutomationProperties.Name="Play or pause" ToolTip="Play or pause"><Path Fill="{DynamicResource Accent}" Data="M0,0 L11,7 L0,14 Z M14,1 H16 V13 H14 Z M18,1 H20 V13 H18 Z"/></Button>
-     <Button Style="{StaticResource Key}" Command="{Binding Action}" CommandParameter="Next" AutomationProperties.Name="Next" ToolTip="Next"><Path Fill="{DynamicResource Ink}" Data="M0,0 L9,6 L0,12 Z M10,0 H12 V12 H10 Z"/></Button>
-    </StackPanel>
-    <Border Grid.Column="1" Background="{DynamicResource Tint}" BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="4" Padding="12,3" Margin="18,0">
-     <DockPanel><Image Source="{Binding Artwork}" DockPanel.Dock="Left" MaxWidth="52" MaxHeight="52" Stretch="Uniform" Margin="0,0,6,0"/><TextBlock DockPanel.Dock="Right" Text="{Binding Clock}" ToolTip="{Binding ClipClock}" Foreground="{DynamicResource Accent}" FontFamily="Consolas" VerticalAlignment="Center" FontSize="18"/><StackPanel><TextBlock Text="{Binding Now}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/><TextBlock Text="{Binding Byline}" Foreground="{DynamicResource Muted}" FontSize="11" TextTrimming="CharacterEllipsis"/><Slider x:Name="SeekBar" IsEnabled="{Binding Seekable}" Height="16" AutomationProperties.Name="Original media position" Minimum="{Binding Minimum}" Maximum="{Binding Maximum}" Value="{Binding Position,Mode=OneWay}" PreviewMouseLeftButtonUp="SeekRelease" PreviewKeyUp="SeekKeys"/></StackPanel></DockPanel>
-    </Border>
-    <StackPanel Grid.Column="2" VerticalAlignment="Center"><TextBlock Text="Volume" Foreground="{DynamicResource Muted}" FontSize="11"/><Slider AutomationProperties.Name="Volume" Width="78" Maximum="1" SmallChange=".05" Value="{Binding Volume}"/></StackPanel>
+  <Border x:Name="ClassicTitle" DockPanel.Dock="Top" Visibility="Collapsed" Background="#2C2C40" Padding="6,3" BorderBrush="#080913" BorderThickness="1">
+   <Grid Height="14" Background="{StaticResource TitleStripes}">
+    <TextBlock Text="M I X A M P" HorizontalAlignment="Center" Background="#303043" Foreground="#F4F3FA" Padding="10,0" FontFamily="Tahoma" FontWeight="Bold" FontStyle="Italic" FontSize="11"/>
    </Grid>
   </Border>
-  <Border DockPanel.Dock="Bottom" Background="{DynamicResource Side}" BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0" Padding="12,5"><TextBlock Text="{Binding Status}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Status}" Foreground="{DynamicResource Muted}"/></Border>
-  <Grid x:Name="Body"><Grid.ColumnDefinitions><ColumnDefinition x:Name="RailWidth" Width="166"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+  <Border x:Name="PlayerDeck" DockPanel.Dock="Top" Background="{DynamicResource Deck}" Padding="12,9" BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,1">
+   <Grid x:Name="DeckLayout"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+    <StackPanel x:Name="TransportKeys" Orientation="Horizontal" VerticalAlignment="Center">
+     <Button Style="{StaticResource Key}" Command="{Binding Action}" CommandParameter="Previous" AutomationProperties.Name="Previous" ToolTip="Previous"><Path Fill="{DynamicResource Ink}" Data="M0,0 H2 V12 H0 Z M12,0 L3,6 L12,12 Z"/></Button>
+     <Button Style="{StaticResource Key}" Command="{Binding Action}" CommandParameter="Toggle" AutomationProperties.Name="{Binding TransportAction}" ToolTip="{Binding TransportAction}"><Path x:Name="TransportIcon" Width="13" Height="14" Fill="{DynamicResource Accent}">
+      <Path.Style><Style TargetType="Path"><Setter Property="Data" Value="M1,0 L12,7 L1,14 Z"/>
+       <Style.Triggers><DataTrigger Binding="{Binding Playing}" Value="True"><Setter Property="Data" Value="M1,0 H5 V14 H1 Z M8,0 H12 V14 H8 Z"/></DataTrigger></Style.Triggers>
+      </Style></Path.Style></Path></Button>
+     <Button Style="{StaticResource Key}" Command="{Binding Action}" CommandParameter="Next" AutomationProperties.Name="Next" ToolTip="Next"><Path Fill="{DynamicResource Ink}" Data="M0,0 L9,6 L0,12 Z M10,0 H12 V12 H10 Z"/></Button>
+    </StackPanel>
+    <Border x:Name="PlayerScreen" Grid.Column="1" Background="{DynamicResource Tint}" BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="4" Padding="12,3" Margin="18,0">
+     <Grid ClipToBounds="True"><local:Visualizer x:Name="NowBars" HorizontalAlignment="Right" Width="104" Height="24" Margin="0,0,56,4" VerticalAlignment="Bottom" BottomAligned="True" Opacity=".17" IsHitTestVisible="False" Focusable="False"/><DockPanel><Image Source="{Binding Artwork}" DockPanel.Dock="Left" MaxWidth="52" MaxHeight="52" Stretch="Uniform" Margin="0,0,6,0"/><TextBlock x:Name="TimeDisplay" DockPanel.Dock="Right" Text="{Binding Clock}" ToolTip="{Binding ClipClock}" Foreground="{DynamicResource Accent}" FontFamily="Consolas" VerticalAlignment="Center" FontSize="18"/><StackPanel x:Name="TrackDetails"><TextBlock x:Name="TrackDisplay" Text="{Binding Now}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/><TextBlock Text="{Binding Byline}" Foreground="{DynamicResource Muted}" FontSize="11" TextTrimming="CharacterEllipsis"/><Slider x:Name="SeekBar" IsEnabled="{Binding Seekable}" Height="16" AutomationProperties.Name="Original media position" Minimum="{Binding Minimum}" Maximum="{Binding Maximum}" Value="{Binding Position,Mode=OneWay}" PreviewMouseLeftButtonUp="SeekRelease" PreviewKeyUp="SeekKeys"/></StackPanel></DockPanel></Grid>
+    </Border>
+    <StackPanel x:Name="VolumePanel" Grid.Column="2" VerticalAlignment="Center"><TextBlock Text="Volume" Foreground="{DynamicResource Muted}" FontSize="11"/><Slider x:Name="VolumeBar" AutomationProperties.Name="Volume" Width="78" Maximum="1" SmallChange=".05" Value="{Binding Volume}"/></StackPanel>
+   </Grid>
+  </Border>
+  <Border DockPanel.Dock="Bottom" Background="{DynamicResource Side}" BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0" Padding="12,5"><DockPanel><TextBlock DockPanel.Dock="Right" Margin="10,0,0,0" Text="{Binding LibraryProgress}" Foreground="{DynamicResource Accent}"/><TextBlock Text="{Binding Status}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Status}" Foreground="{DynamicResource Muted}"/></DockPanel></Border>
+  <Grid x:Name="Body"><Grid.ColumnDefinitions><ColumnDefinition x:Name="RailWidth" Width="166" MinWidth="120" MaxWidth="460"/><ColumnDefinition Width="*" MinWidth="220"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
    <Border x:Name="Rail" Background="{DynamicResource Side}" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,1,0" Padding="10,15">
-    <StackPanel><StackPanel Orientation="Horizontal" Margin="4,0,0,18"><Path Fill="{DynamicResource Accent}" Stretch="Uniform" Width="22" Height="23" Data="M0,2 L6,0 12,2 12,17 6,15 0,17 Z M15,2 L21,0 27,2 27,17 21,15 15,17 Z"/><TextBlock Text="Mixamp" Margin="7,0,0,0" FontWeight="Bold" FontSize="18"/></StackPanel><StackPanel x:Name="Sources"/></StackPanel>
+    <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel><StackPanel x:Name="SidebarBrand" Orientation="Horizontal" Margin="4,0,0,18"><Image Source="mixtape.png" Width="32" Height="32" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True"/><TextBlock Text="Mixamp" Margin="7,0,0,0" FontWeight="Bold" FontSize="18"/></StackPanel><StackPanel x:Name="Sources"/>
+     <Expander x:Name="PlaylistFolder" Header="Playlists" Margin="2,10" Foreground="{DynamicResource Ink}">
+      <ListBox x:Name="PlaylistLinks" Margin="6,4,0,0" BorderThickness="0" Background="Transparent" Foreground="{DynamicResource Ink}" ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+     </Expander>
+    </StackPanel></ScrollViewer>
    </Border>
+   <GridSplitter x:Name="RailSplitter" Grid.Column="0" HorizontalAlignment="Right" VerticalAlignment="Stretch" Width="5" Background="Transparent" ResizeDirection="Columns" ResizeBehavior="CurrentAndNext" AutomationProperties.Name="Resize sidebar"/>
    <DockPanel Grid.Column="1">
     <Grid DockPanel.Dock="Top" Margin="14,13"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-     <StackPanel><TextBlock Text="{Binding Caption}" Foreground="{DynamicResource Muted}" FontSize="11"/><TextBlock Text="{Binding Section}" FontWeight="SemiBold" FontSize="23"/></StackPanel>
-     <StackPanel Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal"><Label Target="{Binding ElementName=Search}" Foreground="{DynamicResource Muted}" VerticalAlignment="Center">Search</Label><TextBox x:Name="Search" Background="{DynamicResource Paper}" Foreground="{DynamicResource Ink}" BorderBrush="{DynamicResource Line}" MinWidth="140" MaxWidth="240" VerticalAlignment="Center" Padding="8,5" ToolTip="Search library (Ctrl+F)" AutomationProperties.Name="Search library" Text="{Binding SearchText,UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
+     <StackPanel><Button x:Name="QueueBack" HorizontalAlignment="Left" Visibility="{Binding IsStationQueue,Converter={StaticResource VisibleWhenTrue}}" Content="‹  All stations" Command="{Binding Action}" CommandParameter="Radio" Style="{StaticResource Key}" ToolTip="All stations (Alt+Left)"/><TextBlock Text="{Binding Caption}" Foreground="{DynamicResource Muted}" FontSize="11"/><TextBlock Text="{Binding ViewTitle}" FontWeight="SemiBold" FontSize="23"/></StackPanel>
+     <StackPanel x:Name="TrackSearch" Grid.Column="1" VerticalAlignment="Center" Orientation="Horizontal"><Label Target="{Binding ElementName=Search}" Foreground="{DynamicResource Muted}" VerticalAlignment="Center">Search</Label><TextBox x:Name="Search" Background="{DynamicResource Paper}" Foreground="{DynamicResource Ink}" BorderBrush="{DynamicResource Line}" MinWidth="140" MaxWidth="240" VerticalAlignment="Center" Padding="8,5" ToolTip="Search library (Ctrl+F)" AutomationProperties.Name="Search library" Text="{Binding SearchText,UpdateSourceTrigger=PropertyChanged}"/></StackPanel>
     </Grid>
-    <UniformGrid Rows="1" DockPanel.Dock="Top" x:Name="Browser" Visibility="Collapsed" Margin="12,0,12,8"><ComboBox x:Name="Genres" ToolTip="Genre" AutomationProperties.Name="Genre filter"/><ComboBox x:Name="Artists" ToolTip="Artist" AutomationProperties.Name="Artist filter"/><ComboBox x:Name="Albums" ToolTip="Album" AutomationProperties.Name="Album filter"/></UniformGrid>
-    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="4"><TextBlock Text="{Binding PageLabel}" Margin="6" VerticalAlignment="Center"/><Button Content="‹" Style="{StaticResource Key}" AutomationProperties.Name="Previous page" Command="{Binding Action}" CommandParameter="Previous page"/><Button Content="›" Style="{StaticResource Key}" AutomationProperties.Name="Next page" Command="{Binding Action}" CommandParameter="Next page"/></StackPanel>
+    <Border x:Name="VisualizerPanel" DockPanel.Dock="Bottom" Height="76" Margin="12,6" CornerRadius="4" Background="{DynamicResource Deck}" Visibility="Collapsed" ClipToBounds="True">
+     <local:Visualizer x:Name="Levels" Margin="8,4" AutomationProperties.Name="Playback level history"/>
+    </Border>
+    <Grid>
+    <DockPanel x:Name="RadioPane" Margin="14,0,14,8" Visibility="Collapsed">
+     <StackPanel DockPanel.Dock="Top">
+      <Button x:Name="RadioBack" Click="BackToRadio" Content="‹  All stations" HorizontalAlignment="Left" Style="{StaticResource Key}"/>
+      <TextBlock x:Name="RadioHeading" FontSize="17" FontWeight="SemiBold" Margin="2,8"/>
+      <TextBox x:Name="RadioSearch" TextChanged="FilterRadio" Padding="7,5" AutomationProperties.Name="Search radio choices"/>
+      <WrapPanel x:Name="RadioSeeds" Margin="0,6"/>
+     </StackPanel>
+     <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,6">
+      <Button x:Name="AddSeed" Click="AddRadioSeed" Style="{StaticResource Key}" Content="Add selection"/>
+      <Button x:Name="PlayStation" Click="PlayRadioSelection" Style="{StaticResource Key}"/>
+     </StackPanel>
+     <Grid><ScrollViewer x:Name="StationScroll" VerticalScrollBarVisibility="Auto"><StackPanel x:Name="StationList"/></ScrollViewer>
+     <ListBox x:Name="RadioChoicesList" DisplayMemberPath="Name" AutomationProperties.Name="Radio choices" SelectionChanged="RadioSelectionChanged"
+       Background="{DynamicResource Paper}" Foreground="{DynamicResource Ink}" BorderThickness="0" VirtualizingPanel.VirtualizationMode="Recycling"/></Grid>
+    </DockPanel>
     <DataGrid x:Name="Songs" ItemsSource="{Binding Rows}" SelectedItem="{Binding Selected}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" SelectionMode="Extended" SelectionUnit="FullRow" EnableRowVirtualization="True" EnableColumnVirtualization="True" VirtualizingPanel.VirtualizationMode="Recycling" RowHeight="26" BorderThickness="0" GridLinesVisibility="None" Background="{DynamicResource Paper}" Foreground="{DynamicResource Ink}" RowBackground="{DynamicResource Paper}" AlternatingRowBackground="{DynamicResource Stripe}" MouseDoubleClick="DoubleClick" Sorting="SortGrid">
      <DataGrid.Columns>
       <DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="2*" MinWidth="140"/>
@@ -43,8 +115,13 @@
       <DataGridTextColumn Header="#" Binding="{Binding Number}" Width="40"/>
       <DataGridTextColumn Header="Year" Binding="{Binding Year}" Width="54"/>
       <DataGridTextColumn Header="Time" Binding="{Binding Length}" Width="72"/>
+      <DataGridTextColumn Header="Genre" Binding="{Binding Genre}" Width="140" Visibility="Collapsed"/>
+      <DataGridTextColumn Header="File path" Binding="{Binding FilePath}" Width="320" Visibility="Collapsed"/>
+      <DataGridTextColumn Header="Format" Binding="{Binding Format}" Width="74" Visibility="Collapsed"/>
+      <DataGridTextColumn Header="Bitrate (kbps)" Binding="{Binding Bitrate}" Width="100" Visibility="Collapsed"/>
      </DataGrid.Columns>
     </DataGrid>
+    </Grid>
    </DockPanel>
    <StackPanel Grid.Column="2" x:Name="Inspector" Width="185" Margin="14" Visibility="Collapsed">
     <TextBlock Text="Inspector" FontWeight="SemiBold" Margin="0,0,0,12"/><Image Source="{Binding Artwork}" MaxHeight="100" Stretch="Uniform"/>

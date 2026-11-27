@@ -7,7 +7,7 @@ using Mixamp.Core;
 
 namespace Mixamp;
 
-sealed class Account(Store store)
+sealed class Account(Store store, Func<string?>? readLogin = null, Action<string?>? writeLogin = null)
 {
     const string Global = "installation";
     public string Identifier { get; } = StableId(store);
@@ -22,11 +22,11 @@ sealed class Account(Store store)
         return id;
     }
 
-    public async Task<(string AccountId, JsonNode[] Servers)> Discover(CancellationToken ct)
+    public async Task<(string AccountId, JsonNode[] Servers)> Discover(CancellationToken ct, bool interactive = true)
     {
         var saved = store.Get(Global, "login");
-        string? token = null;
-        if (!string.IsNullOrEmpty(saved))
+        string? token = readLogin?.Invoke();
+        if (readLogin == null && OperatingSystem.IsWindows() && !string.IsNullOrEmpty(saved))
         {
             try
             {
@@ -46,6 +46,7 @@ sealed class Account(Store store)
         using var cloud = new Plex(new Uri("https://plex.tv"), Identifier);
         if (token == null)
         {
+            if (!interactive) throw new IOException("Connect to Plex to resume syncing.");
             var pin = await cloud.Call("/api/v2/pins?strong=true", HttpMethod.Post, ct);
             var code = Plex.E(pin.Str("code"));
             var id = Plex.E(pin.Str("id"));
@@ -76,7 +77,8 @@ sealed class Account(Store store)
             var user = await auth.Call("/api/v2/user", ct: ct);
             var servers = (JsonArray)
                 await auth.Call("/api/v2/resources?includeHttps=1&includeRelay=1", ct: ct);
-            store.Set(
+            if (writeLogin != null) writeLogin(token);
+            else if (OperatingSystem.IsWindows()) store.Set(
                 Global,
                 "login",
                 Convert.ToBase64String(
@@ -98,7 +100,7 @@ sealed class Account(Store store)
         catch (HttpRequestException ex)
             when (ex.StatusCode == System.Net.HttpStatusCode.Unauthorized)
         {
-            store.Set(Global, "login", "");
+            if (writeLogin == null) store.Set(Global, "login", ""); else writeLogin(null);
             throw new IOException("Plex revoked this sign-in. Connect again.");
         }
     }

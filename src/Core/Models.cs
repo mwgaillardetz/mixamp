@@ -39,6 +39,8 @@ public record Track(
 )
 {
     public string ArtistDisplay => Performer.Length == 0 ? Artist : Performer;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string FilePath => Parts.FirstOrDefault()?.File ?? "";
     public string Length => Cue.Format(Duration);
 
     [System.Text.Json.Serialization.JsonIgnore]
@@ -141,7 +143,7 @@ public record Cue(long? Start = null, long? End = null)
                 && (m.Groups[2].Length != 2 || int.Parse(m.Groups[2].Value) > 59)
             )
         )
-            throw new FormatException("Enter m:ss, m:ss.fff or h:mm:ss.fff.");
+            throw new FormatException("Enter time as minutes:seconds, for example 4:08.");
         long Value(int i) =>
             m.Groups[i].Success ? long.Parse(m.Groups[i].Value, CultureInfo.InvariantCulture) : 0;
         return checked(
@@ -151,5 +153,5 @@ public record Cue(long? Start = null, long? End = null)
     }
 
     public static string Format(long ms) =>
-        $"{ms / 60000}:{ms / 1000 % 60:00}" + (ms % 1000 == 0 ? "" : $".{ms % 1000:000}");
+        $"{ms / 60000}:{ms / 1000 % 60:00}";
 }

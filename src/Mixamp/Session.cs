@@ -44,7 +44,7 @@ sealed class Command(Func<string, Task> run, Action<string> error, Func<string, 
     }
 }
 
-sealed class Session : INotifyPropertyChanged
+sealed partial class Session : INotifyPropertyChanged
 {
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -73,7 +73,6 @@ sealed class Session : INotifyPropertyChanged
     DateTime nextReport;
     int generation,
         readGeneration,
-        page,
         index = -1;
     string status = "Connect to Plex or open the loopback demo.",
         searchText = "",
@@ -94,6 +93,13 @@ sealed class Session : INotifyPropertyChanged
             Changed();
         }
     }
+    string libraryProgress = "";
+    public string LibraryProgress
+    {
+        get => libraryProgress;
+        private set { libraryProgress = value; Changed(); }
+    }
+
     public string Status
     {
         get => status;
@@ -110,6 +116,8 @@ sealed class Session : INotifyPropertyChanged
         {
             section = value;
             Changed();
+            Changed(nameof(ViewTitle));
+            Changed(nameof(IsStationQueue));
         }
     }
     public string SearchText
@@ -119,11 +127,32 @@ sealed class Session : INotifyPropertyChanged
         {
             searchText = value;
             Changed();
-            page = 0;
             ScheduleSearch();
         }
     }
-    public string PageLabel => CatalogView ? $"Page {page + 1}" : "";
+    public string ViewTitle => Section == "Playlists"
+        ? Playlists.FirstOrDefault(p => p.Id == playlistId)?.Name ?? "Playlist"
+        : IsStationQueue ? stationName + " · Up Next" : Section;
+    string stationName = "";
+    public bool IsStationQueue => Section == "Up Next" && stationName.Length > 0;
+    void SetStationName(string name)
+    {
+        stationName = name;
+        Changed(nameof(ViewTitle));
+        Changed(nameof(IsStationQueue));
+    }
+    public void PreviewEq(string mode) => audio.EqMode = mode;
+    public string EqMode
+    {
+        get => audio.EqMode;
+        set { audio.EqMode = value; Store.Set("installation", "eq", value); Status = $"EQ · {audio.EqProfile}"; }
+    }
+    public bool Playing => audio.Playing;
+    public string TransportAction => Playing ? "Pause" : "Play";
+    public bool Descending => descending;
+    public sealed record PlaylistEntry(string Id, string Name);
+    public IReadOnlyList<PlaylistEntry> Playlists { get; private set; } = [];
+    IReadOnlyDictionary<string, Track>? snapshot;
     public string Now => Current?.Title ?? "Ready to play";
     public System.Windows.Media.Imaging.BitmapImage? Artwork { get; private set; }
     public string Byline =>
@@ -131,7 +160,7 @@ sealed class Session : INotifyPropertyChanged
             ? ""
             : Current.ArtistDisplay + "   ·   " + Current.Format.ToUpperInvariant();
     public Track? Current { get; private set; }
-    public string Clock => Current == null ? "0:00" : Cue.Format(audio.Position / 1000 * 1000);
+    public string Clock => Current == null ? "0:00" : Cue.Format(audio.Position);
     public long Position => audio.Position;
     public bool Seekable => Current?.Duration > 0;
     Cue activeCue = new();
@@ -141,7 +170,7 @@ sealed class Session : INotifyPropertyChanged
     public string ClipClock =>
         Current == null
             ? ""
-            : $"Original {Clock} / {Current.Length}   ·   Playback {Cue.Format(Math.Clamp(Position - Minimum, 0, Maximum - Minimum) / 1000 * 1000)} / {Cue.Format(Maximum - Minimum)}";
+            : $"Original {Clock} / {Current.Length}   ·   Playback {Cue.Format(Math.Clamp(Position - Minimum, 0, Maximum - Minimum))} / {Cue.Format(Maximum - Minimum)}";
     public double Volume
     {
         get => audio.Volume;
@@ -172,6 +201,7 @@ sealed class Session : INotifyPropertyChanged
     public Session(Store store, IPlayback audio)
     {
         this.audio = audio;
+        audio.EqMode = store.Get("installation", "eq") ?? "Auto";
         Store = store;
         account = new(store);
         Action = new Command(
@@ -180,15 +210,15 @@ sealed class Session : INotifyPropertyChanged
             cmd =>
                 cmd switch
                 {
-                    "Delete file from server" => owned
-                        && Selected is { Parts.Length: > 0 } t
-                        && t.Parts.All(p => p.Id != "" && p.File != "")
-                        && Selection().Length == 1,
+                    "Delete tracks from server" => !batchBusy && owned && Api != null && Selected != null,
+                    "Undo" or "Redo" => !batchBusy && Api != null,
+                    "Rename file" => !batchBusy && Api != null && Selected != null && Selection().Length == 1,
+                    "Organize files by artist" => !batchBusy && Api != null && Selected != null,
                     "Remove from queue" => Section == "Up Next" && Selected != null,
                     "Remove from playlist" or "Move up" => Section == "Playlists"
                         && Selected?.PlaylistItem.Length > 0,
-                    "Next page" => CatalogView && Rows.Count == 160,
-                    "Previous page" => CatalogView && page > 0,
+                    "New playlist" => Api != null,
+                    "Add to playlist" => Api != null && Selected != null,
                     "Song Info"
                     or "Play"
                     or "Play full track once"
@@ -202,6 +232,8 @@ sealed class Session : INotifyPropertyChanged
         audio.Skip += d => Action.Execute(d < 0 ? "Previous" : "Next");
         audio.StateChanged += playing =>
         {
+            Changed(nameof(Playing));
+            Changed(nameof(TransportAction));
             if (Current == null)
                 return;
             if (playing)
@@ -215,6 +247,8 @@ sealed class Session : INotifyPropertyChanged
         };
         audio.Failed += async msg =>
         {
+            Changed(nameof(Playing));
+            Changed(nameof(TransportAction));
             timer.Stop();
             _ = Report("stopped");
             Status = msg;
@@ -290,17 +324,25 @@ sealed class Session : INotifyPropertyChanged
         }
     }
 
-    public async Task Cached()
+    public async Task Cached(bool reconnect = false)
     {
         if (Store.Get("installation", "lastScope") is not { } value)
             return;
         Scope = JsonSerializer.Deserialize<Scope>(value)!;
         Caption = Store.Get(Scope.Key, "caption") ?? "Cached library";
-        await Refresh();
-        Status = "Cached library ready. Connect to resume server playback.";
+        LibraryProgress = "Loading saved library…";
+        try { await Refresh(); }
+        finally { LibraryProgress = ""; }
+        Status = "Cached library ready.";
+        if (reconnect && Api == null && !connection.IsCancellationRequested)
+        {
+            try { await Connect(Scope.Account == "demo" && Scope.Server == "mixamp-demo", Scope); }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { Status = "Saved library available. " + Message(ex); }
+        }
     }
 
-    record QueueState(Track[] Tracks, int Index, string QueueId, bool Repeat);
+    record QueueState(Track[] Tracks, int Index, string QueueId, bool Repeat, string? StationName = null);
 
     void SaveQueue()
     {
@@ -308,7 +350,7 @@ sealed class Session : INotifyPropertyChanged
             Store.Set(
                 Scope.Key,
                 "queue",
-                JsonSerializer.Serialize(new QueueState(Queue.ToArray(), index, queueId, Repeat))
+                JsonSerializer.Serialize(new QueueState(Queue.ToArray(), index, queueId, Repeat, stationName))
             );
     }
 
@@ -321,14 +363,16 @@ sealed class Session : INotifyPropertyChanged
             Queue.Add(t);
         index = state.Index;
         queueId = state.QueueId;
+        SetStationName(state.StationName ?? (queueId.Length > 0 ? "Radio" : ""));
         Repeat = state.Repeat;
     }
 
-    async Task Connect(bool demo)
+    async Task Connect(bool demo, Scope? resume = null)
     {
         connection.Cancel();
         connection = new();
         var ct = connection.Token;
+        LibraryProgress = resume == null ? "Connecting to library…" : "Reconnecting to library…";
         Plex? candidate = null;
         try
         {
@@ -353,9 +397,12 @@ sealed class Session : INotifyPropertyChanged
             else
             {
                 Status = "Waiting for Plex sign-in and server discovery…";
-                var discovery = await account.Discover(ct);
+                var discovery = await account.Discover(ct, interactive: resume == null);
                 user = discovery.AccountId;
-                var s = discovery.Servers[
+                var s = resume != null
+                    ? discovery.Servers.FirstOrDefault(s => user == resume.Account && s.Str("clientIdentifier") == resume.Server)
+                        ?? throw new IOException("The saved Plex server is unavailable.")
+                    : discovery.Servers[
                     Dialogs.Choose(
                         "Plex servers",
                         discovery.Servers.Select(s => s.Str("name")).ToArray()
@@ -370,7 +417,10 @@ sealed class Session : INotifyPropertyChanged
                 .Items("Directory")
                 .Where(d => d.Str("type") == "artist")
                 .ToArray();
-            var lib = sections[
+            var lib = resume != null
+                ? sections.FirstOrDefault(l => l.Str("key") == resume.Library)
+                    ?? throw new IOException("The saved music library is unavailable.")
+                : sections[
                 sections.Length == 1
                     ? 0
                     : Dialogs.Choose(
@@ -387,6 +437,7 @@ sealed class Session : INotifyPropertyChanged
             Queue.Clear();
             index = -1;
             queueId = playlistId = "";
+            SetStationName("");
             Api?.Dispose();
             Api = candidate;
             candidate = null;
@@ -395,19 +446,22 @@ sealed class Session : INotifyPropertyChanged
             serverName = name;
             owned = owner;
             writable = owner || lib.Str("allowEdit").ToLowerInvariant() is "1" or "true";
-            genre = artistFilter = albumFilter = "";
+            if (resume == null) snapshot = null;
+            Playlists = [];
+            Changed(nameof(Playlists));
             Caption = LibraryName + "  /  " + name;
             Store.Set("installation", "lastScope", JsonSerializer.Serialize(Scope));
             Store.Set(Scope.Key, "caption", Caption);
             RestoreQueue();
-            page = 0;
             Section = "Songs";
-            await Refresh();
+            if (resume == null) await Refresh();
             await Sync();
+            await ReloadPlaylists();
         }
         finally
         {
             candidate?.Dispose();
+            if (connection.Token == ct) LibraryProgress = "";
         }
     }
 
@@ -418,15 +472,31 @@ sealed class Session : INotifyPropertyChanged
         var token = sync.Token;
         var g = generation;
         Status = "Syncing music library…";
-        await Library.Sync(
-            Store,
-            () => token.IsCancellationRequested ? Task.CompletedTask : Refresh(),
-            token
-        );
-        if (g == generation)
+        try
         {
-            await Refresh();
-            Status = "Library synced.";
+            LibraryProgress = "Checking library…";
+            bool changed = await Library.Sync(Store,
+                () => token.IsCancellationRequested || snapshot?.Count > 0 ? Task.CompletedTask : Refresh(),
+                token, (count, total, incremental) =>
+                {
+                    if (token.IsCancellationRequested) return;
+                    var action = incremental ? "Checking for changes" : "Loading library";
+                    LibraryProgress = total < 0 ? action + "…" : $"{action} · {count:N0} / {total:N0}";
+                });
+            if (g == generation && !token.IsCancellationRequested)
+            {
+                if (changed) await Refresh();
+                Status = changed ? "Library synced." : "Library is up to date.";
+            }
+        }
+        catch
+        {
+            if (g == generation && sync.Token == token) await Refresh();
+            throw;
+        }
+        finally
+        {
+            if (sync.Token == token) LibraryProgress = "";
         }
     }
 
@@ -438,7 +508,7 @@ sealed class Session : INotifyPropertyChanged
         try
         {
             await Task.Delay(60, ct);
-            await Refresh(ct);
+            await Refresh(ct, reuse: true);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -447,101 +517,58 @@ sealed class Session : INotifyPropertyChanged
         }
     }
 
-    string genre = "",
-        artistFilter = "",
-        albumFilter = "";
-
-    public Task Filter(string g, string a, string b)
+    public async Task Refresh(CancellationToken ct = default, bool reuse = false)
     {
-        genre = g;
-        artistFilter = a;
-        albumFilter = b;
-        page = 0;
-        Section = "Songs";
-        return Refresh();
-    }
-
-    string groupId = "";
-    bool CatalogView => Section is "Songs" or "Albums" or "Artists";
-
-    async Task ChooseGroup(string name)
-    {
-        bool albums = name == "Albums";
-        int p = 0;
-        while (true)
-        {
-            var groups = await Task.Run(() => Store.Groups(Scope, albums, p));
-            var labels = groups.Take(128).Select(g => g.Label).ToList();
-            if (groups.Count == 129)
-                labels.Add("Next 128…");
-            if (p > 0)
-                labels.Add("Previous 128…");
-            int selected = Dialogs.Choose(name, labels.ToArray());
-            if (selected < Math.Min(128, groups.Count))
-            {
-                Section = name;
-                groupId = groups[selected].Id;
-                page = 0;
-                await Refresh();
-                return;
-            }
-            p += selected == 128 && groups.Count == 129 ? 1 : -1;
-        }
-    }
-
-    public async Task Refresh(CancellationToken ct = default)
-    {
-        if (!CatalogView)
+        if (!reuse)
+            snapshot = null;
+        if (Section != "Songs")
             return;
         int seq = ++readGeneration;
         var scope = Scope;
         string term = SearchText,
             sort = order;
-        int p = page;
+        var cached = snapshot;
         bool desc = descending;
         await database.WaitAsync(ct);
         List<Track> result;
         try
         {
-            result = await Task.Run(
-                () =>
-                    Store.Search(
-                        scope,
-                        term,
-                        sort,
-                        desc,
-                        p,
-                        160,
-                        Section == "Songs" ? genre : "",
-                        Section == "Songs" ? artistFilter : "",
-                        Section == "Songs" ? albumFilter : "",
-                        Section == "Albums" ? groupId : "",
-                        Section == "Artists" ? groupId : ""
-                    ),
-                ct
-            );
+            if (seq != readGeneration)
+                return;
+            result = await Task.Run(() =>
+            {
+                if (cached == null)
+                {
+                    var all = Store.Search(scope, sort: sort, descending: desc, limit: -1, ct: ct);
+                    cached = all.ToDictionary(t => t.Id);
+                    if (term.Length == 0)
+                        return all;
+                }
+                return Store.Search(scope, term, sort, desc, limit: -1, snapshot: cached, ct: ct);
+            }, ct);
         }
         finally
         {
             database.Release();
         }
-        if (seq == readGeneration && CatalogView && scope == Scope && !ct.IsCancellationRequested)
+        if (seq == readGeneration && Section == "Songs" && scope == Scope && !ct.IsCancellationRequested)
+        {
+            snapshot = cached;
             Show(result);
+        }
     }
 
     void Show(IReadOnlyList<Track> list)
     {
         Rows = list;
         Changed(nameof(Rows));
-        Changed(nameof(PageLabel));
     }
 
     public Task Sort(string col)
     {
         descending = col == order && !descending;
         order = col;
-        page = 0;
-        return Refresh();
+        return Refresh(reuse: true);
     }
 
     void Stop()
@@ -559,6 +586,8 @@ sealed class Session : INotifyPropertyChanged
         foreach (
             var n in new[]
             {
+                nameof(Playing),
+                nameof(TransportAction),
                 nameof(Now),
                 nameof(Byline),
                 nameof(Position),
@@ -665,7 +694,7 @@ sealed class Session : INotifyPropertyChanged
             return;
         if (Section == "Up Next")
         {
-            index = SelectedIndex();
+            index = SelectedQueueIndex();
             if (index < 0)
                 return;
         }
@@ -676,8 +705,16 @@ sealed class Session : INotifyPropertyChanged
                 Queue.Add(t);
             index = 0;
             queueId = "";
+            SetStationName("");
         }
         await Start(Queue[index], full);
+    }
+
+    int SelectedQueueIndex()
+    {
+        int row = SelectedIndex();
+        if (row >= 0 && row < Queue.Count && ReferenceEquals(Queue[row], Selected)) return row;
+        return Selected == null ? -1 : Queue.IndexOf(Selected);
     }
 
     async Task Advance(int step, bool ended = false)
@@ -734,37 +771,84 @@ sealed class Session : INotifyPropertyChanged
         await Start(Queue[index]);
     }
 
-    async Task Playlist()
+    public async Task ReloadPlaylists()
     {
-        var lists = await Library.Playlists();
-        var list = lists[Dialogs.Choose("Playlists", lists.Select(p => p.Str("title")).ToArray())];
-        playlistId = list.Str("ratingKey");
+        if (Api == null) return;
+        var api = Api;
+        var entries = (await Library.Playlists()).Select(p => new PlaylistEntry(p.Str("ratingKey"), p.Str("title"))).ToList();
+        if (api != Api) return;
+        Playlists = entries;
+        Changed(nameof(Playlists));
+        Changed(nameof(ViewTitle));
+    }
+
+    public async Task OpenPlaylist(string id)
+    {
+        playlistId = id;
+        Section = "Playlists";
+        Show([]);
         await PlaylistRows();
+    }
+
+    public async Task DeletePlaylist(PlaylistEntry entry)
+    {
+        if (MessageBox.Show($"Remove the playlist “{entry.Name}”? Its tracks stay in your library.",
+                "Remove playlist", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return;
+        await Library.DeletePlaylist(entry.Id);
+        if (playlistId == entry.Id && Section == "Playlists")
+            await Run("Songs");
+        await ReloadPlaylists();
     }
 
     async Task PlaylistRows()
     {
-        var tracks = (await Library.PlaylistItems(playlistId))
-            .Items("Metadata")
-            .Select(Track.Read)
-            .ToList();
-        Section = "Playlists";
-        Show(tracks);
+        var id = playlistId;
+        var api = Api;
+        var tracks = (await Library.PlaylistItems(id)).Items("Metadata").Select(Track.Read).ToList();
+        if (Section == "Playlists" && playlistId == id && api == Api)
+            Show(tracks);
     }
 
-    async Task Station(bool artist)
+    public IReadOnlyList<RadioOption> Stations { get; private set; } = [];
+    public string RadioMessage { get; private set; } = "";
+    int stationRequest;
+
+    async Task BrowseRadio(bool byArtist)
     {
-        var list = await Library.Stations(
-            artist ? Selected ?? throw new IOException("Select a track by this artist.") : null
-        );
-        if (list.Count == 0)
-            throw new IOException(
-                "No station available. Library Shuffle is available in Playback."
-            );
-        var station = list[
-            Dialogs.Choose("Plex radio stations", list.Select(x => x.Str("title")).ToArray())
-        ];
-        var q = await Library.StationQueue(station.Str("key"));
+        var artist = byArtist ? Selected ?? throw new IOException("Select a track by this artist.") : null;
+        var request = ++stationRequest;
+        var api = Api;
+        RadioMessage = "Loading stations…";
+        Stations = [];
+        Section = "Radio";
+        Show([]);
+        try
+        {
+            var stations = await Library.RadioStations(artist);
+            if (request != stationRequest || Section != "Radio" || api != Api) return;
+            Stations = stations;
+            RadioMessage = stations.Count == 0 ? "Plex returned no stations for this artist." : "";
+        }
+        catch (Exception ex)
+        {
+            if (request != stationRequest || Section != "Radio" || api != Api) return;
+            RadioMessage = Message(ex);
+        }
+        Changed(nameof(Stations));
+    }
+
+    public Task<List<RadioChoice>> RadioChoices(RadioOption option) => Library.RadioChoices(option, Store);
+
+    int radioPlayRequest;
+    public void CancelPendingStation() => ++radioPlayRequest;
+    public async Task PlayRadio(RadioOption option, IReadOnlyList<string> choices)
+    {
+        var api = Api;
+        int request = ++radioPlayRequest;
+        int browse = stationRequest;
+        var q = await Library.StartRadio(option, choices, Store);
+        if (api != Api || Section != "Radio" || browse != stationRequest || request != radioPlayRequest) return;
         var entries = q.Items("Metadata").Select(Track.Read).ToList();
         if (entries.Count == 0)
             throw new IOException("Plex returned an empty station.");
@@ -773,72 +857,10 @@ sealed class Session : INotifyPropertyChanged
             Queue.Add(t);
         index = 0;
         queueId = q.Str("playQueueID");
+        SetStationName(option.Name);
+        Section = "Up Next";
+        Show(Queue);
         await Start(Queue[0]);
-    }
-
-    async Task Delete()
-    {
-        if (!owned || Selected == null || Selection().Length != 1)
-            throw new IOException("Select one track on an owned server to review deletion.");
-        var atScope = Scope;
-        var deletion = new Deletion(Api!, atScope, owned);
-        var reviewed = await deletion.Review(Selected.Id);
-        var t = reviewed.Track;
-        if (Scope != atScope)
-            return;
-        var files = string.Join("\n", t.Parts.Select(p => p.File));
-        if (
-            MessageBox.Show(
-                $"Delete {t.Title} from {serverName} / {LibraryName}?\n\nPlex will delete these {t.Parts.Length} media parts:\n{files}",
-                "Delete file from server",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning,
-                MessageBoxResult.No
-            ) != MessageBoxResult.Yes
-        )
-            return;
-        if (!await deletion.Commit(reviewed))
-        {
-            Status = "Track still present. Review again before retrying.";
-            return;
-        }
-        if (Scope != atScope)
-            return;
-        if (Current?.Id == t.Id)
-            Stop();
-        for (int i = Queue.Count - 1; i >= 0; i--)
-            if (Queue[i].Id == t.Id)
-            {
-                Queue.RemoveAt(i);
-                if (i <= index)
-                    index--;
-            }
-        var mappingJson = Store.Get(Scope.Key, "mappings");
-        string verification = "Server-confirmed removal";
-        if (mappingJson != null)
-        {
-            var mappings = JsonSerializer.Deserialize<Mapping[]>(mappingJson)!;
-            bool missing = true;
-            foreach (var part in t.Parts)
-            {
-                try
-                {
-                    MappedFiles.Resolve(part.File, mappings);
-                    missing = false;
-                }
-                catch (FileNotFoundException)
-                { /* File is gone. */
-                }
-                catch (Exception)
-                {
-                    missing = false;
-                }
-            }
-            if (missing)
-                verification = "Verified removal on mapped share";
-        }
-        await Sync();
-        Status = verification + ": " + files;
     }
 
     public async Task Run(string cmd)
@@ -858,27 +880,27 @@ sealed class Session : INotifyPropertyChanged
                 break;
             case "Songs":
                 Section = "Songs";
-                await Refresh();
-                break;
-            case "Artists":
-            case "Albums":
-                await ChooseGroup(cmd);
-                break;
-            case "Playlists":
-                await Playlist();
+                await Refresh(reuse: true);
                 break;
             case "New playlist":
             case "Add to playlist":
+                var library = Library;
+                var api = Api;
                 var tracks = Selection();
-                if (tracks.Length == 0)
+                if (tracks.Length == 0 && cmd != "New playlist")
                     return;
                 string? dest = null,
                     name = "";
                 if (cmd == "New playlist")
+                {
                     name = Dialogs.Input("New playlist name");
+                    if (name.Length == 0) throw new IOException("Enter a playlist name.");
+                    if (tracks.Length == 0)
+                        dest = (await library.CreatePlaylist(name)).Items("Metadata").Single().Str("ratingKey");
+                }
                 else
                 {
-                    var lists = await Library.Playlists();
+                    var lists = await library.Playlists();
                     dest = lists[
                         Dialogs.Choose("Playlists", lists.Select(p => p.Str("title")).ToArray())
                     ]
@@ -886,11 +908,13 @@ sealed class Session : INotifyPropertyChanged
                 }
                 foreach (var t in tracks)
                 {
-                    var r = await Library.AddToPlaylist(dest, name, t);
+                    if (Api != api) return;
+                    var r = await library.AddToPlaylist(dest, name, t);
                     dest ??= r.Items("Metadata").Single().Str("ratingKey");
                 }
-                playlistId = dest!;
-                await PlaylistRows();
+                if (Api != api) return;
+                await ReloadPlaylists();
+                if (Api == api) await OpenPlaylist(dest!);
                 break;
             case "Remove from playlist":
             case "Move up":
@@ -912,10 +936,10 @@ sealed class Session : INotifyPropertyChanged
                 await PlaylistRows();
                 break;
             case "Radio":
-                await Station(false);
+                await BrowseRadio(false);
                 break;
             case "Artist radio":
-                await Station(true);
+                await BrowseRadio(true);
                 break;
             case "Internet radio":
                 var urls = JsonSerializer.Deserialize<List<string>>(
@@ -956,10 +980,9 @@ sealed class Session : INotifyPropertyChanged
                         Path.GetFileName(picker.FileName),
                         (long)f.Properties.Duration.TotalMilliseconds
                     );
-                    var cue = new Cue(
-                        Cue.Parse(Dialogs.Input("Clip start", "0:00")),
-                        Cue.Parse(Dialogs.Input("Clip stop", local.Length))
-                    );
+                    var clipStart = Cue.Parse(Dialogs.Input("Clip start", "0:00"));
+                    var clipStop = Dialogs.Input("Clip stop", local.Length);
+                    var cue = new Cue(clipStart, clipStop == local.Length ? local.Duration : Cue.Parse(clipStop));
                     cue.Validate(local.Duration);
                     await Start(local, false, new Uri(picker.FileName), cue);
                 }
@@ -973,7 +996,12 @@ sealed class Session : INotifyPropertyChanged
                 await PlaySelection(cmd != "Play");
                 break;
             case "Toggle":
-                if (Current == null)
+                if (Current == null && Selected == null && Queue.Count > 0)
+                {
+                    index = Math.Clamp(index, 0, Queue.Count-1);
+                    await Start(Queue[index]);
+                }
+                else if (Current == null)
                     await PlaySelection(false);
                 else
                 {
@@ -994,7 +1022,7 @@ sealed class Session : INotifyPropertyChanged
             case "Remove from queue":
                 if (Section != "Up Next" || Selected == null)
                     throw new IOException("Select an entry in Up Next.");
-                int pos = SelectedIndex();
+                int pos = SelectedQueueIndex();
                 if (pos >= 0)
                 {
                     Queue.RemoveAt(pos);
@@ -1011,21 +1039,8 @@ sealed class Session : INotifyPropertyChanged
                     Queue.Add(t);
                 index = 0;
                 queueId = "";
+                SetStationName("");
                 await Start(Queue[0]);
-                break;
-            case "Next page":
-                if (Rows.Count == 160)
-                {
-                    page++;
-                    await Refresh();
-                }
-                break;
-            case "Previous page":
-                if (page > 0)
-                {
-                    page--;
-                    await Refresh();
-                }
                 break;
             case "Song Info":
                 var sel = Selection();
@@ -1036,8 +1051,14 @@ sealed class Session : INotifyPropertyChanged
                 if (sel.Length > 0)
                     new Editor(this, sel).ShowDialog();
                 break;
-            case "Delete file from server":
-                await Delete();
+            case "Delete tracks from server":
+            case "Rename file":
+            case "Organize files by artist":
+                await BatchFiles(cmd);
+                break;
+            case "Undo":
+            case "Redo":
+                await ReplayHistory(cmd == "Redo");
                 break;
             case "Share mapping":
                 if (Api == null)

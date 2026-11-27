@@ -1,4 +1,4 @@
-param([switch]$Benchmark,[switch]$SkipWindowSmoke)
+param([switch]$Benchmark,[switch]$SkipWindowSmoke,[string]$PackageFolder = "mixamp-win-x64")
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 Push-Location (Join-Path $PSScriptRoot '..')
@@ -27,7 +27,7 @@ try {
     if ($Benchmark) { $arguments += @('--benchmark', (Join-Path $out 'store-benchmark.json')) }
     dotnet tests/bin/Release/net10.0/Checks.dll @arguments
     & $python.Source tools/scenarios.py
-    $folder = Join-Path $out 'mixamp-win-x64'
+    $folder = Join-Path $out $PackageFolder
     $payload = Join-Path $folder 'app'
     $venv = Join-Path $out 'launcher-toolchain'
     & $python.Source -m venv $venv
@@ -45,14 +45,20 @@ try {
         if (!(Test-Path (Join-Path $payload $name))) { throw "Package is missing $name" }
     }
     if ($IsWindows -and !$SkipWindowSmoke) {
-        $shots = Join-Path $out 'screenshots'
+        $shots = Join-Path $out 'screenshots/themes'
         $app = Start-Process (Join-Path $folder 'Mixamp.exe') -ArgumentList "--smoke-demo `"$shots`"" -PassThru
         if (!$app.WaitForExit(90000)) { $app.Kill(); throw 'Packaged WPF smoke test timed out.' }
-        if ($app.ExitCode -ne 0 -or @(Get-ChildItem "$shots/*.png").Count -ne 5) { throw 'Packaged WPF smoke test failed.' }
+        if ($app.ExitCode -ne 0 -or @(Get-ChildItem "$shots/*.png").Count -lt 6) { throw 'Packaged WPF smoke test failed.' }
     }
     $zip = Join-Path $out 'Mixamp-win-x64.zip'
     $pendingZip = "$zip.$([guid]::NewGuid()).tmp"
-    [System.IO.Compression.ZipFile]::CreateFromDirectory($folder, $pendingZip, [System.IO.Compression.CompressionLevel]::Optimal, $true)
+    $archive = [System.IO.Compression.ZipFile]::Open($pendingZip, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($file in Get-ChildItem -LiteralPath $folder -Recurse -File -Force) {
+            $relative = [IO.Path]::GetRelativePath($folder, $file.FullName).Replace('\','/')
+            [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $file.FullName, "Mixamp/$relative")
+        }
+    } finally { $archive.Dispose() }
     Move-Item $pendingZip $zip -Force
     Get-FileHash $zip
 } finally {

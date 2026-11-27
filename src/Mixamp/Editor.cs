@@ -88,8 +88,8 @@ sealed class Editor : Window
         var cue = vm.Store.ReadCue(vm.Scope, t);
         start.IsChecked = cue.Start.HasValue;
         stop.IsChecked = cue.End.HasValue;
-        from.Text = Cue.Format(cue.Start ?? 0);
-        until.Text = Cue.Format(cue.End ?? t.Duration);
+        SetTime(from, cue.Start ?? 0);
+        SetTime(until, cue.End ?? t.Duration);
         foreach (var (check, box) in new[] { (start, from), (stop, until) })
         {
             playback.Children.Add(check);
@@ -103,10 +103,11 @@ sealed class Editor : Window
             now.Click += (s, e) =>
             {
                 check.IsChecked = true;
-                box.Text = Cue.Format(vm.Position);
+                SetTime(box, vm.Position);
+                Describe();
             };
             playback.Children.Add(now);
-            box.TextChanged += (s, e) => Describe();
+            box.TextChanged += (s, e) => { box.Tag = null; Describe(); };
             check.Checked += (s, e) => Describe();
             check.Unchecked += (s, e) => Describe();
         }
@@ -280,10 +281,18 @@ sealed class Editor : Window
         }
     }
 
+    static void SetTime(TextBox box, long milliseconds)
+    {
+        box.Text = Cue.Format(milliseconds);
+        box.Tag = milliseconds; // Retain the exact cue until the user edits its text.
+    }
+
+    static long ReadTime(TextBox box) => box.Tag is long exact ? exact : Cue.Parse(box.Text);
+
     Cue Read() =>
         new(
-            start.IsChecked == true ? Cue.Parse(from.Text) : null,
-            stop.IsChecked == true ? Cue.Parse(until.Text) : null
+            start.IsChecked == true ? ReadTime(from) : null,
+            stop.IsChecked == true ? ReadTime(until) : null
         );
 
     void Describe()
@@ -331,13 +340,19 @@ sealed class Editor : Window
         saving = true;
         save.IsEnabled = false;
         tabs.IsEnabled = false;
+        string batch = Guid.NewGuid().ToString();
         List<string> outcomes = [];
         try
         {
             if (tabs.SelectedIndex == 1)
             {
                 var cue = Read();
-                vm.Store.SaveCue(vm.Scope, tracks.Single(), cue);
+                var track = tracks.Single();
+                cue.Validate(track.Duration);
+                var before = vm.Store.ReadCue(vm.Scope, track);
+                if (cue != before) vm.Store.Remember(vm.Scope, batch, "Edit playback range",
+                    new(track, "Cue", "", "", System.Text.Json.JsonSerializer.Serialize(before), System.Text.Json.JsonSerializer.Serialize(cue)));
+                vm.Store.SaveCue(vm.Scope, track, cue);
                 result.Text = "Playback range saved. Applies in Mixamp.";
                 return;
             }
@@ -375,7 +390,7 @@ sealed class Editor : Window
                 if (target.SelectedIndex != 0 && !completed.Contains("f" + key))
                 {
                     var writer = new FileWriter(vm.Store, vm.Scope, vm.Api!);
-                    outcomes.Add(await Task.Run(() => writer.Write(t, files)));
+                    outcomes.Add(await Task.Run(() => writer.Write(t, files, batch)));
                     completed.Add("f" + key);
                 }
                 if (target.SelectedIndex != 1 && !completed.Contains("p" + key))
@@ -383,7 +398,14 @@ sealed class Editor : Window
                     var plex = edits
                         .Where(f => f.Plex is not null and not "albumRelation")
                         .ToDictionary(f => f.Plex!, Value);
-                    await vm.Api!.SetFields(vm.Scope.Library, t, plex);
+                    if (plex.Count > 0)
+                    {
+                        var before = await vm.Api!.Fresh(t.Id);
+                        var previous = plex.Keys.ToDictionary(k => k, k => Session.FieldValue(before, k));
+                        vm.Store.Remember(vm.Scope, batch, "Edit song information", new(t, "Plex", "", "",
+                            System.Text.Json.JsonSerializer.Serialize(previous), System.Text.Json.JsonSerializer.Serialize(plex)));
+                        await vm.Api.SetFields(vm.Scope.Library, t, plex);
+                    }
                     completed.Add("p" + key);
                     outcomes.Add("Verified Plex fields for " + t.Title + ".");
                 }

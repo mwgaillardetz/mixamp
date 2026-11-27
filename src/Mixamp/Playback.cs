@@ -14,6 +14,8 @@ interface IPlayback : IDisposable
     event Action<string>? Failed;
     event Action<int>? Skip;
     Task Start(Track track, Cue cue, Plex? server, Uri? source, CancellationToken ct);
+    string EqMode { get; set; }
+    string EqProfile { get; }
     string Route { get; }
     bool Playing { get; }
     long Position { get; }
@@ -28,25 +30,35 @@ sealed class Playback : IPlayback
     MediaPlayer? player;
     MediaSource? media;
     IRandomAccessStream? random;
+    string? originalPath;
     long begin,
         end;
     double volume = .7;
     readonly System.Windows.Threading.Dispatcher ui = System.Windows.Application.Current.Dispatcher;
     Windows.Web.Http.HttpClient? hlsClient;
     Windows.Media.Streaming.Adaptive.AdaptiveMediaSource? adaptive;
+    ToneOutput? tone;
+    string genre = "", eqMode = "Auto";
+    public string EqProfile => tone == null ? "Flat" : ToneProfile.Choose(eqMode, genre).Name;
+    public string EqMode
+    {
+        get => eqMode;
+        set { eqMode = value; tone?.Apply(ToneProfile.Choose(value, genre)); }
+    }
     public string Route { get; private set; } = "";
     public event Action? Ended;
     public event Action<bool>? StateChanged;
     public event Action<string>? Failed;
     public event Action<int>? Skip;
-    public bool Playing => player?.PlaybackSession.PlaybackState == MediaPlaybackState.Playing;
-    public long Position => (long)(player?.PlaybackSession.Position.TotalMilliseconds ?? 0);
+    public bool Playing => tone?.Playing ?? player?.PlaybackSession.PlaybackState == MediaPlaybackState.Playing;
+    public long Position => tone?.Position ?? (long)(player?.PlaybackSession.Position.TotalMilliseconds ?? 0);
     public double Volume
     {
         get => volume;
         set
         {
             volume = Math.Clamp(value, 0, 1);
+            if (tone != null) tone.Volume = volume;
             if (player != null)
                 player.Volume = volume;
         }
@@ -55,6 +67,7 @@ sealed class Playback : IPlayback
     public async Task Start(Track t, Cue cue, Plex? api, Uri? uri, CancellationToken ct)
     {
         IRandomAccessStream? input = null;
+        bool buffered = false;
         if (uri == null)
         {
             if (t.Parts.Length != 1)
@@ -64,12 +77,13 @@ sealed class Playback : IPlayback
                 throw new IOException("Plex did not supply a safe media part key.");
             try
             {
-                var probe = await api!.Range(p.Key, 0, 1, p.Size > 0 ? p.Size : null, ct);
+                var probe = await api!.Range(p.Key, 0, 1, null, ct);
                 ct.ThrowIfCancellationRequested();
                 input = new RangeAccess(api, p.Key, probe.Size);
             }
-            catch (IOException) when (cue.Start == null && cue.End == null)
-            { /* Negotiate streaming on a non-range route. */
+            catch (Exception ex) when (ex is IOException or HttpRequestException)
+            {
+                buffered = true;
             }
         }
         else if (uri.IsFile)
@@ -86,36 +100,55 @@ sealed class Playback : IPlayback
         random = input;
         try
         {
-            string ext = (
-                uri?.IsFile == true
-                    ? Path.GetExtension(uri.LocalPath).TrimStart('.')
-                    : t.Parts.FirstOrDefault()?.Container ?? ""
-            ).ToLowerInvariant();
-            bool direct = input != null && api != null && uri == null;
-            if (input == null && uri == null)
-                media = await Transcode(api!, t, ct);
-            else
-                media =
-                    input == null
-                        ? MediaSource.CreateFromUri(uri!)
-                        : MediaSource.CreateFromStream(
-                            input,
-                            ext switch
-                            {
-                                "mp3" => "audio/mpeg",
-                                "m4a" or "mp4" => "audio/mp4",
-                                "wav" => "audio/wav",
-                                "flac" => "audio/flac",
-                                _ => "application/octet-stream",
-                            }
-                        );
-            Route =
-                input == null && uri == null ? "Plex audio transcode · HLS"
-                : direct ? "Direct play · authenticated HTTP ranges"
+            var part = t.Parts.FirstOrDefault();
+            string ext = uri?.IsFile == true ? Path.GetExtension(uri.LocalPath)
+                : string.IsNullOrWhiteSpace(part?.Container) ? Path.GetExtension(part?.File) ?? "" : part.Container;
+            string mime = ext.TrimStart('.').ToLowerInvariant() switch
+            {
+                "mp3" => "audio/mpeg", "m4a" or "mp4" or "alac" => "audio/mp4",
+                "aac" => "audio/aac", "wav" or "wave" => "audio/wav", "flac" => "audio/flac",
+                "ogg" or "oga" or "opus" => "audio/ogg", "wma" or "asf" => "audio/x-ms-wma",
+                "aif" or "aiff" => "audio/aiff", _ => "application/octet-stream",
+            };
+            bool direct = api != null && uri == null;
+            if (buffered)
+                random = await BufferedOriginal(api!, part!, ct);
+            media = random == null ? MediaSource.CreateFromUri(uri!) : MediaSource.CreateFromStream(random, mime);
+            Route = direct ? "Direct play"
                 : uri?.IsFile == true ? "Local file · Windows media engine"
                 : "Internet radio · live";
             begin = cue.Start ?? 0;
             end = cue.End ?? t.Duration;
+            genre = t.Genre;
+            if (uri?.IsFile != false)
+            {
+                ToneOutput? candidate = null;
+                try
+                {
+                    candidate = await ToneOutput.Open(MediaSource.CreateFromStream(random!.CloneStream(), mime), cue, ct);
+                    ct.ThrowIfCancellationRequested();
+                    candidate.Apply(ToneProfile.Choose(eqMode, genre));
+                    candidate.Volume = volume;
+                    var activeTone = candidate;
+                    activeTone.Ended += () => ui.InvokeAsync(() => { if (tone == activeTone) Ended?.Invoke(); });
+                    activeTone.Failed += () => ui.InvokeAsync(() =>
+                    {
+                        if (tone == activeTone) { Stop(); Failed?.Invoke("Audio output disconnected."); }
+                    });
+                    activeTone.Toggle();
+                    tone = activeTone;
+                    BindToneControls(t, activeTone);
+                    _ = ui.InvokeAsync(() => { if (tone == activeTone) StateChanged?.Invoke(true); });
+                    return;
+                }
+                catch (OperationCanceledException) { candidate?.Dispose(); throw; }
+                catch (Exception)
+                {
+                    candidate?.Dispose();
+                    ct.ThrowIfCancellationRequested();
+                    // The neutral player uses its original, independent stream.
+                }
+            }
             var start = TimeSpan.FromMilliseconds(begin);
             var item = cue.End.HasValue
                 ? new MediaPlaybackItem(media, start, TimeSpan.FromMilliseconds(end - begin))
@@ -150,6 +183,32 @@ sealed class Playback : IPlayback
                 {
                     if (player != active)
                         return;
+                    if (direct && !buffered)
+                    {
+                        buffered = true;
+                        try
+                        {
+                            var original = await BufferedOriginal(api!, part!, ct);
+                            ct.ThrowIfCancellationRequested();
+                            random?.Dispose();
+                            random = original;
+                            media?.Dispose();
+                            media = MediaSource.CreateFromStream(original, mime);
+                            active.Source = cue.End.HasValue
+                                ? new MediaPlaybackItem(media, start, TimeSpan.FromMilliseconds(end - begin))
+                                : new MediaPlaybackItem(media, start);
+                            active.Play();
+                            return;
+                        }
+                        catch (OperationCanceledException) { return; }
+                        catch (Exception ex)
+                        {
+                            if (player != active) return;
+                            Stop();
+                            Failed?.Invoke("Could not read the original Plex file. " + Session.Message(ex));
+                            return;
+                        }
+                    }
                     if (direct && cue == new Cue())
                     {
                         direct = false;
@@ -164,7 +223,7 @@ sealed class Playback : IPlayback
                             media?.Dispose();
                             media = fallback;
                             active.Source = new MediaPlaybackItem(media);
-                            Route = "Plex audio transcode · HLS";
+                            Route = "Transcoding";
                             active.Play();
                             return;
                         }
@@ -218,7 +277,63 @@ sealed class Playback : IPlayback
         }
         catch
         {
-            Stop();
+            if (!ct.IsCancellationRequested) Stop();
+            throw;
+        }
+    }
+
+    void BindToneControls(Track track, ToneOutput active)
+    {
+        try
+        {
+            player = new MediaPlayer();
+            player.CommandManager.IsEnabled = false;
+            var controls = player.SystemMediaTransportControls;
+            controls.IsEnabled = controls.IsPlayEnabled = controls.IsPauseEnabled = true;
+            controls.IsNextEnabled = controls.IsPreviousEnabled = true;
+            var display = controls.DisplayUpdater;
+            display.Type = MediaPlaybackType.Music;
+            display.MusicProperties.Title = track.Title;
+            display.MusicProperties.Artist = track.ArtistDisplay;
+            display.Update();
+            controls.PlaybackStatus = MediaPlaybackStatus.Playing;
+            controls.ButtonPressed += (_, e) => ui.InvokeAsync(() =>
+            {
+                if (tone != active) return;
+                if (e.Button == SystemMediaTransportControlsButton.Next) Skip?.Invoke(1);
+                else if (e.Button == SystemMediaTransportControlsButton.Previous) Skip?.Invoke(-1);
+                else if ((e.Button == SystemMediaTransportControlsButton.Play && !Playing)
+                    || (e.Button == SystemMediaTransportControlsButton.Pause && Playing)) Toggle();
+            });
+            controls.PlaybackPositionChangeRequested += (_, e) => ui.InvokeAsync(() =>
+            {
+                if (tone == active) Seek((long)e.RequestedPlaybackPosition.TotalMilliseconds);
+            });
+        }
+        catch (System.Runtime.InteropServices.COMException) { player?.Dispose(); player = null; }
+    }
+
+    async Task<IRandomAccessStream> BufferedOriginal(Plex api, Part part, CancellationToken ct)
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"mixamp-audio-{Guid.NewGuid():N}.tmp");
+        try
+        {
+            await using (var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                81920, FileOptions.Asynchronous | FileOptions.SequentialScan))
+                await api.CopyOriginal(part.Key, output, ct);
+            var file = await Windows.Storage.StorageFile.GetFileFromPathAsync(path).AsTask(ct);
+            var stream = await file.OpenReadAsync().AsTask(ct);
+            if (ct.IsCancellationRequested)
+            {
+                stream.Dispose();
+                ct.ThrowIfCancellationRequested();
+            }
+            originalPath = path;
+            return stream;
+        }
+        catch
+        {
+            File.Delete(path);
             throw;
         }
     }
@@ -279,12 +394,21 @@ sealed class Playback : IPlayback
 
     public void Seek(long ms)
     {
-        if (player?.PlaybackSession.CanSeek == true && end > begin)
+        if (tone != null && end > begin) tone.Seek(Math.Clamp(ms, begin, end));
+        else if (player?.PlaybackSession.CanSeek == true && end > begin)
             player.PlaybackSession.Position = TimeSpan.FromMilliseconds(Math.Clamp(ms, begin, end));
     }
 
     public void Toggle()
     {
+        if (tone != null)
+        {
+            tone.Toggle();
+            if (player != null) player.SystemMediaTransportControls.PlaybackStatus =
+                tone.Playing ? MediaPlaybackStatus.Playing : MediaPlaybackStatus.Paused;
+            StateChanged?.Invoke(tone.Playing);
+            return;
+        }
         if (Playing)
             player?.Pause();
         else
@@ -293,6 +417,9 @@ sealed class Playback : IPlayback
 
     public void Stop()
     {
+        var oldTone = tone;
+        tone = null;
+        oldTone?.Dispose();
         var old = player;
         player = null;
         old?.Dispose();
@@ -300,6 +427,11 @@ sealed class Playback : IPlayback
         media = null;
         random?.Dispose();
         random = null;
+        if (originalPath != null)
+        {
+            try { File.Delete(originalPath); } catch (IOException) { }
+            originalPath = null;
+        }
         adaptive?.Dispose();
         adaptive = null;
         hlsClient?.Dispose();
