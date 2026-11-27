@@ -1,0 +1,12 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <SolidColorBrush x:Key="Canvas" Color="#222325"/>
+  <SolidColorBrush x:Key="Side" Color="#2C2C2D"/>
+  <SolidColorBrush x:Key="Paper" Color="#262627"/>
+  <SolidColorBrush x:Key="Stripe" Color="#2B2B2B"/>
+  <SolidColorBrush x:Key="Ink" Color="#EFECE8"/>
+  <SolidColorBrush x:Key="Muted" Color="#B8B1AA"/>
+  <SolidColorBrush x:Key="Accent" Color="#E6AA70"/>
+  <SolidColorBrush x:Key="Tint" Color="#44392F"/>
+  <SolidColorBrush x:Key="Line" Color="#484441"/>
+  <LinearGradientBrush x:Key="Deck" StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#343231" Offset="0"/><GradientStop Color="#2A2929" Offset="1"/></LinearGradientBrush>
+</ResourceDictionary>

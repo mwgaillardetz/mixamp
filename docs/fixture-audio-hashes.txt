@@ -1,0 +1,4 @@
+aac.m4a verified independent tags and PCM 830b339a152d6c8eeaeaca475c1977487d62243a8a54e8aec0625831c1847081
+alac.m4a verified independent tags and PCM e315de4f1efdc11b3c107b6fc47072f90096468376fee260f52a7aa2f158c493
+flac.flac verified independent tags and PCM e315de4f1efdc11b3c107b6fc47072f90096468376fee260f52a7aa2f158c493
+libmp3lame.mp3 verified independent tags and PCM 4f6522ca6bf765797012743bacef0c5d3fb8b9b46e1f60c791979cc42462244d

@@ -1,0 +1,610 @@
+{
+  "workload": "Release C# store, generated data, first 160 rows, no network or WPF",
+  "os": "Ubuntu 26.04.1 LTS",
+  "runtime": "10.0.15",
+  "processors": 40,
+  "initialMs": 25722.671,
+  "searchP95Ms": 44.8039,
+  "raw": [
+    {
+      "term": "Session 000000",
+      "ms": 24.0068,
+      "rows": 1
+    },
+    {
+      "term": "Album 1",
+      "ms": 17.2197,
+      "rows": 160
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 10.5088,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 48.6529,
+      "rows": 160
+    },
+    {
+      "term": "missing4",
+      "ms": 18.3432,
+      "rows": 0
+    },
+    {
+      "term": "Session 004055",
+      "ms": 21.1961,
+      "rows": 1
+    },
+    {
+      "term": "Album 6",
+      "ms": 15.7346,
+      "rows": 160
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 8.6923,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 46.5962,
+      "rows": 160
+    },
+    {
+      "term": "missing9",
+      "ms": 18.0185,
+      "rows": 0
+    },
+    {
+      "term": "Session 008110",
+      "ms": 21.6907,
+      "rows": 1
+    },
+    {
+      "term": "Album 11",
+      "ms": 14.136,
+      "rows": 160
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 8.8687,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 49.5661,
+      "rows": 160
+    },
+    {
+      "term": "missing14",
+      "ms": 21.9072,
+      "rows": 0
+    },
+    {
+      "term": "Session 012165",
+      "ms": 24.5406,
+      "rows": 1
+    },
+    {
+      "term": "Album 16",
+      "ms": 14.4283,
+      "rows": 160
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 8.499,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 45.3126,
+      "rows": 160
+    },
+    {
+      "term": "missing19",
+      "ms": 17.2529,
+      "rows": 0
+    },
+    {
+      "term": "Session 016220",
+      "ms": 20.0131,
+      "rows": 1
+    },
+    {
+      "term": "Album 21",
+      "ms": 12.6417,
+      "rows": 160
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 8.635,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 44.01,
+      "rows": 160
+    },
+    {
+      "term": "missing24",
+      "ms": 17.1782,
+      "rows": 0
+    },
+    {
+      "term": "Session 020275",
+      "ms": 20.7182,
+      "rows": 1
+    },
+    {
+      "term": "Album 26",
+      "ms": 13.3375,
+      "rows": 160
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 7.986,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 44.6006,
+      "rows": 160
+    },
+    {
+      "term": "missing29",
+      "ms": 18.4952,
+      "rows": 0
+    },
+    {
+      "term": "Session 024330",
+      "ms": 23.3952,
+      "rows": 1
+    },
+    {
+      "term": "Album 31",
+      "ms": 11.4057,
+      "rows": 160
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 6.5214,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 43.56,
+      "rows": 160
+    },
+    {
+      "term": "missing34",
+      "ms": 18.1236,
+      "rows": 0
+    },
+    {
+      "term": "Session 028385",
+      "ms": 20.9703,
+      "rows": 1
+    },
+    {
+      "term": "Album 36",
+      "ms": 11.694,
+      "rows": 160
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 6.5748,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 41.7597,
+      "rows": 160
+    },
+    {
+      "term": "missing39",
+      "ms": 16.9775,
+      "rows": 0
+    },
+    {
+      "term": "Session 032440",
+      "ms": 22.4591,
+      "rows": 1
+    },
+    {
+      "term": "Album 41",
+      "ms": 11.7367,
+      "rows": 160
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 6.6779,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 44.9336,
+      "rows": 160
+    },
+    {
+      "term": "missing44",
+      "ms": 18.9536,
+      "rows": 0
+    },
+    {
+      "term": "Session 036495",
+      "ms": 21.1988,
+      "rows": 1
+    },
+    {
+      "term": "Album 46",
+      "ms": 10.8548,
+      "rows": 160
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 6.4129,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 41.1297,
+      "rows": 160
+    },
+    {
+      "term": "missing49",
+      "ms": 17.2017,
+      "rows": 0
+    },
+    {
+      "term": "Session 040550",
+      "ms": 21.4565,
+      "rows": 1
+    },
+    {
+      "term": "Album 51",
+      "ms": 11.8716,
+      "rows": 160
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 6.6369,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 42.5241,
+      "rows": 160
+    },
+    {
+      "term": "missing54",
+      "ms": 17.8361,
+      "rows": 0
+    },
+    {
+      "term": "Session 044605",
+      "ms": 22.231,
+      "rows": 1
+    },
+    {
+      "term": "Album 56",
+      "ms": 10.9697,
+      "rows": 160
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 6.6043,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 43.0523,
+      "rows": 160
+    },
+    {
+      "term": "missing59",
+      "ms": 18.5703,
+      "rows": 0
+    },
+    {
+      "term": "Session 048660",
+      "ms": 23.4256,
+      "rows": 1
+    },
+    {
+      "term": "Album 61",
+      "ms": 11.4239,
+      "rows": 160
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 6.5221,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 44.6132,
+      "rows": 160
+    },
+    {
+      "term": "missing64",
+      "ms": 18.7131,
+      "rows": 0
+    },
+    {
+      "term": "Session 052715",
+      "ms": 23.8857,
+      "rows": 1
+    },
+    {
+      "term": "Album 66",
+      "ms": 12.8143,
+      "rows": 160
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 6.404,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 47.0255,
+      "rows": 160
+    },
+    {
+      "term": "missing69",
+      "ms": 17.9233,
+      "rows": 0
+    },
+    {
+      "term": "Session 056770",
+      "ms": 24.7894,
+      "rows": 1
+    },
+    {
+      "term": "Album 71",
+      "ms": 11.7955,
+      "rows": 160
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 6.4154,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 44.4378,
+      "rows": 160
+    },
+    {
+      "term": "missing74",
+      "ms": 18.7177,
+      "rows": 0
+    },
+    {
+      "term": "Session 060825",
+      "ms": 24.2808,
+      "rows": 1
+    },
+    {
+      "term": "Album 76",
+      "ms": 12.0167,
+      "rows": 160
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 6.463,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 43.8483,
+      "rows": 160
+    },
+    {
+      "term": "missing79",
+      "ms": 18.2801,
+      "rows": 0
+    },
+    {
+      "term": "Session 064880",
+      "ms": 23.8642,
+      "rows": 1
+    },
+    {
+      "term": "Album 81",
+      "ms": 11.1839,
+      "rows": 160
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 5.9972,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 41.3651,
+      "rows": 160
+    },
+    {
+      "term": "missing84",
+      "ms": 17.6251,
+      "rows": 0
+    },
+    {
+      "term": "Session 068935",
+      "ms": 22.3307,
+      "rows": 1
+    },
+    {
+      "term": "Album 86",
+      "ms": 11.3467,
+      "rows": 160
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 6.2062,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 43.484,
+      "rows": 160
+    },
+    {
+      "term": "missing89",
+      "ms": 16.9805,
+      "rows": 0
+    },
+    {
+      "term": "Session 072990",
+      "ms": 25.0996,
+      "rows": 1
+    },
+    {
+      "term": "Album 91",
+      "ms": 12.889,
+      "rows": 160
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 6.5077,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 43.9476,
+      "rows": 160
+    },
+    {
+      "term": "missing94",
+      "ms": 18.6625,
+      "rows": 0
+    },
+    {
+      "term": "Session 077045",
+      "ms": 23.909,
+      "rows": 1
+    },
+    {
+      "term": "Album 96",
+      "ms": 11.0362,
+      "rows": 160
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 7.2968,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 43.9222,
+      "rows": 160
+    },
+    {
+      "term": "missing99",
+      "ms": 17.6914,
+      "rows": 0
+    },
+    {
+      "term": "Session 081100",
+      "ms": 22.3973,
+      "rows": 1
+    },
+    {
+      "term": "Album 101",
+      "ms": 25.6368,
+      "rows": 100
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 6.4606,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 41.2923,
+      "rows": 160
+    },
+    {
+      "term": "missing104",
+      "ms": 17.4369,
+      "rows": 0
+    },
+    {
+      "term": "Session 085155",
+      "ms": 23.0579,
+      "rows": 1
+    },
+    {
+      "term": "Album 106",
+      "ms": 24.5752,
+      "rows": 100
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 6.6304,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 43.4532,
+      "rows": 160
+    },
+    {
+      "term": "missing109",
+      "ms": 17.6356,
+      "rows": 0
+    },
+    {
+      "term": "Session 089210",
+      "ms": 23.7404,
+      "rows": 1
+    },
+    {
+      "term": "Album 111",
+      "ms": 27.1641,
+      "rows": 100
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 6.4149,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 44.6002,
+      "rows": 160
+    },
+    {
+      "term": "missing114",
+      "ms": 18.7577,
+      "rows": 0
+    },
+    {
+      "term": "Session 093265",
+      "ms": 44.8039,
+      "rows": 1
+    },
+    {
+      "term": "Album 116",
+      "ms": 34.0136,
+      "rows": 100
+    },
+    {
+      "term": "\u6C60\u7530",
+      "ms": 6.627,
+      "rows": 160
+    },
+    {
+      "term": "Various Artists",
+      "ms": 43.876,
+      "rows": 160
+    },
+    {
+      "term": "missing119",
+      "ms": 18.127,
+      "rows": 0
+    }
+  ]
+}
