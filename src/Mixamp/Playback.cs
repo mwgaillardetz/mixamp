@@ -1,11 +1,11 @@
 using System.IO;
-using CrateDeck.Core;
+using Mixamp.Core;
 using Windows.Media;
 using Windows.Media.Core;
 using Windows.Media.Playback;
 using Windows.Storage.Streams;
 
-namespace CrateDeck;
+namespace Mixamp;
 
 interface IPlayback : IDisposable
 {

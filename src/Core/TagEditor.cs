@@ -2,7 +2,7 @@ using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace CrateDeck.Core;
+namespace Mixamp.Core;
 
 public static class TagEditor
 {

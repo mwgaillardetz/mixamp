@@ -1,4 +1,4 @@
-param([string]$Exe = 'artifacts/mixamp-win-x64/app/CrateDeck.exe')
+param([string]$Exe = 'artifacts/mixamp-win-x64/app/Mixamp.exe')
 $ErrorActionPreference = 'Stop'
 # Start the 100k disposable mock with tools/mock_plex.py --count 100000 first.
 $folder = (New-Item -ItemType Directory -Path "artifacts/benchmark-$(Get-Date -Format yyyyMMdd-HHmmss)").FullName
@@ -14,7 +14,7 @@ function Run-Phase($phase,$id) {
         $watch = [Diagnostics.Stopwatch]::StartNew()
         while (!$proc.WaitForExit(1000) -and $watch.Elapsed.TotalMinutes -lt 10) {
             if ($phase -eq 'idle' -and $id -eq 'minimized' -and $watch.Elapsed.TotalSeconds -gt 5) {
-                [CrateDeckBenchWindow]::ShowWindowAsync($proc.MainWindowHandle,6) | Out-Null
+                [MixampBenchWindow]::ShowWindowAsync($proc.MainWindowHandle,6) | Out-Null
             }
             $perf = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -Filter "IDProcess = $($proc.Id)"
             if ($perf) {
@@ -30,7 +30,7 @@ function Run-Phase($phase,$id) {
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
-public static class CrateDeckBenchWindow {
+public static class MixampBenchWindow {
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr window, int command);
 }
 '@

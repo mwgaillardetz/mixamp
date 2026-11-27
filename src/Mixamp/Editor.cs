@@ -1,6 +1,6 @@
 using System.Text.Json.Nodes;
 
-namespace CrateDeck;
+namespace Mixamp;
 
 sealed class Editor : Window
 {
@@ -79,7 +79,7 @@ sealed class Editor : Window
         playback.Children.Add(
             new TextBlock
             {
-                Text = "Applies in CrateDeck",
+                Text = "Applies in Mixamp",
                 FontWeight = FontWeights.Bold,
                 Margin = new Thickness(0, 6, 0, 8),
             }
@@ -338,7 +338,7 @@ sealed class Editor : Window
             {
                 var cue = Read();
                 vm.Store.SaveCue(vm.Scope, tracks.Single(), cue);
-                result.Text = "Playback range saved. Applies in CrateDeck.";
+                result.Text = "Playback range saved. Applies in Mixamp.";
                 return;
             }
             var edits = fields.Where(f => f.Mode.SelectedIndex > 0).ToList();

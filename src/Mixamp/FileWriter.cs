@@ -2,10 +2,10 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
-using CrateDeck.Core;
+using Mixamp.Core;
 using Microsoft.Win32.SafeHandles;
 
-namespace CrateDeck;
+namespace Mixamp;
 
 sealed class FileWriter(Store store, Scope scope, Plex api)
 {
@@ -143,7 +143,7 @@ sealed class FileWriter(Store store, Scope scope, Plex api)
             return result;
         var tmp = Path.Combine(
             Path.GetDirectoryName(path)!,
-            ".cratedeck-" + Guid.NewGuid().ToString("N") + Path.GetExtension(path)
+            ".mixamp-" + Guid.NewGuid().ToString("N") + Path.GetExtension(path)
         );
         bool pending = false;
         try

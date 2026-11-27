@@ -3,7 +3,7 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 
-namespace CrateDeck;
+namespace Mixamp;
 
 public partial class MainWindow : Window
 {
@@ -24,7 +24,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         var dir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "CrateDeck"
+            "Mixamp"
         );
         var args = Environment.GetCommandLineArgs().Skip(1).ToArray();
         bool smoke = args.FirstOrDefault() == "--smoke-demo" && args.Length == 2;
@@ -33,13 +33,20 @@ public partial class MainWindow : Window
         if (benchmark)
             dir = Path.Combine(Path.GetFullPath(args[1]), "demo-profile");
         if (smoke || probe)
-            dir = Directory.CreateTempSubdirectory("cratedeck-smoke-").FullName;
+            dir = Directory.CreateTempSubdirectory("mixamp-smoke-").FullName;
         if (new Uri(dir).IsUnc)
-            throw new IOException("CrateDeck requires a local user profile for its databases.");
+            throw new IOException("Mixamp requires a local user profile for its databases.");
+        if (!benchmark && !smoke && !probe && !Directory.Exists(dir))
+        {
+            // Preserve the previous preview's sign-in, catalog and saved cues on upgrade.
+            var previous = Path.Combine(Path.GetDirectoryName(dir)!, "CrateDeck");
+            if (Directory.Exists(previous))
+                Directory.Move(previous, dir);
+        }
         vm = new(new Store(dir), new Playback());
         DataContext = vm;
         vm.SelectedIndex = () => Songs.SelectedIndex;
-        vm.Selection = () => Songs.SelectedItems.Cast<CrateDeck.Core.Track>().ToArray();
+        vm.Selection = () => Songs.SelectedItems.Cast<Mixamp.Core.Track>().ToArray();
         MenuItem Item(string cmd) =>
             new()
             {

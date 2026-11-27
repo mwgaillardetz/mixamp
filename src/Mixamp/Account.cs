@@ -3,9 +3,9 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
-using CrateDeck.Core;
+using Mixamp.Core;
 
-namespace CrateDeck;
+namespace Mixamp;
 
 sealed class Account(Store store)
 {
@@ -51,7 +51,7 @@ sealed class Account(Store store)
             var id = Plex.E(pin.Str("id"));
             Process.Start(
                 new ProcessStartInfo(
-                    $"https://app.plex.tv/auth#?clientID={Identifier}&code={code}&context%5Bdevice%5D%5Bproduct%5D=CrateDeck"
+                    $"https://app.plex.tv/auth#?clientID={Identifier}&code={code}&context%5Bdevice%5D%5Bproduct%5D=Mixamp"
                 )
                 {
                     UseShellExecute = true,

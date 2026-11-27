@@ -1,7 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Core/Core.csproj" />
-    <Project Path="src/CrateDeck/CrateDeck.csproj" />
+    <Project Path="src/Mixamp/Mixamp.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Checks.csproj" />

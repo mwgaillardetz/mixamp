@@ -3,7 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
-namespace CrateDeck.Core;
+namespace Mixamp.Core;
 
 public record Mapping(string ServerRoot, string Share);
 

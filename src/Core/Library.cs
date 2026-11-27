@@ -1,6 +1,6 @@
 using System.Text.Json.Nodes;
 
-namespace CrateDeck.Core;
+namespace Mixamp.Core;
 
 public sealed class Library(Plex api, Scope scope)
 {

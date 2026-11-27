@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 
-namespace CrateDeck.Core;
+namespace Mixamp.Core;
 
 // Callers establish the approved path and hold their source and directory handles through Commit.
 public sealed class Replacement(Store store, Scope scope, string id)

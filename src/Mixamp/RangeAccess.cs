@@ -1,7 +1,7 @@
 using Windows.Foundation;
 using Windows.Storage.Streams;
 
-namespace CrateDeck;
+namespace Mixamp;
 
 // The stock managed stream adapter omits CloneStream and GetInputStreamAt.
 // Each decoder reader needs its own cursor and bounded range window.

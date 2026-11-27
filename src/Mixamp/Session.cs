@@ -6,7 +6,7 @@ using System.Text.Json.Nodes;
 using System.Windows.Input;
 using System.Windows.Threading;
 
-namespace CrateDeck;
+namespace Mixamp;
 
 sealed class Command(Func<string, Task> run, Action<string> error, Func<string, bool> available)
     : ICommand
@@ -339,7 +339,7 @@ sealed class Session : INotifyPropertyChanged
             if (demo)
             {
                 user = "demo";
-                machine = "cratedeck-demo";
+                machine = "mixamp-demo";
                 name = "Demo server";
                 owner = true;
                 candidate = new(
@@ -348,7 +348,7 @@ sealed class Session : INotifyPropertyChanged
                     "fixture-only"
                 );
                 if ((await candidate.Call("/identity", ct: ct)).Str("machineIdentifier") != machine)
-                    throw new IOException("Loopback server is not the CrateDeck fixture.");
+                    throw new IOException("Loopback server is not the Mixamp fixture.");
             }
             else
             {

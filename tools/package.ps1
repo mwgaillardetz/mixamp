@@ -5,8 +5,8 @@ Push-Location (Join-Path $PSScriptRoot '..')
 $server = $null
 $pendingZip = $null
 try {
-    dotnet restore CrateDeck.slnx --locked-mode
-    dotnet build CrateDeck.slnx -c Release --no-restore
+    dotnet restore Mixamp.slnx --locked-mode
+    dotnet build Mixamp.slnx -c Release --no-restore
     $out = Join-Path (Get-Location) 'artifacts'
     New-Item -Force -ItemType Directory $out | Out-Null
     $python = (Get-Command python -ErrorAction SilentlyContinue)
@@ -17,7 +17,7 @@ try {
         if ($server.HasExited) { throw 'Could not start isolated fixture on loopback port 32491.' }
         try {
             $reply = Invoke-RestMethod 'http://127.0.0.1:32491/identity' -Headers @{'X-Plex-Token'='fixture-only'} -TimeoutSec 1
-            $ready = $reply.MediaContainer.machineIdentifier -eq 'cratedeck-demo'
+            $ready = $reply.MediaContainer.machineIdentifier -eq 'mixamp-demo'
         } catch {}
         if ($ready) { break }
         Start-Sleep -Milliseconds 200
@@ -36,21 +36,21 @@ try {
     New-Item -Force -ItemType Directory $folder | Out-Null
     Push-Location launcher
     try {
-        & $compiler -m ziglang cc -target x86_64-windows-gnu -Os -s -municode "-Wl,--subsystem,windows" main.c icon.rc -o (Join-Path $folder 'CrateDeck.exe')
+        & $compiler -m ziglang cc -target x86_64-windows-gnu -Os -s -municode "-Wl,--subsystem,windows" main.c icon.rc -o (Join-Path $folder 'Mixamp.exe')
     } finally { Pop-Location }
-    dotnet publish src/CrateDeck -c Release -r win-x64 --self-contained true --no-restore -o $payload
+    dotnet publish src/Mixamp -c Release -r win-x64 --self-contained true --no-restore -o $payload
     Copy-Item README.md,THIRD-PARTY-NOTICES.md,notices,docs -Destination $folder -Recurse -Force
     Copy-Item tools/mock_plex.py -Destination $folder
-    foreach ($name in 'CrateDeck.exe','coreclr.dll','hostfxr.dll','PresentationFramework.dll','e_sqlite3.dll','TagLibSharp.dll','Microsoft.Windows.SDK.NET.dll','WinRT.Runtime.dll','wpfgfx_cor3.dll') {
+    foreach ($name in 'Mixamp.exe','coreclr.dll','hostfxr.dll','PresentationFramework.dll','e_sqlite3.dll','TagLibSharp.dll','Microsoft.Windows.SDK.NET.dll','WinRT.Runtime.dll','wpfgfx_cor3.dll') {
         if (!(Test-Path (Join-Path $payload $name))) { throw "Package is missing $name" }
     }
     if ($IsWindows -and !$SkipWindowSmoke) {
         $shots = Join-Path $out 'screenshots'
-        $app = Start-Process (Join-Path $folder 'CrateDeck.exe') -ArgumentList "--smoke-demo `"$shots`"" -PassThru
+        $app = Start-Process (Join-Path $folder 'Mixamp.exe') -ArgumentList "--smoke-demo `"$shots`"" -PassThru
         if (!$app.WaitForExit(90000)) { $app.Kill(); throw 'Packaged WPF smoke test timed out.' }
         if ($app.ExitCode -ne 0 -or @(Get-ChildItem "$shots/*.png").Count -ne 5) { throw 'Packaged WPF smoke test failed.' }
     }
-    $zip = Join-Path $out 'CrateDeck-win-x64.zip'
+    $zip = Join-Path $out 'Mixamp-win-x64.zip'
     $pendingZip = "$zip.$([guid]::NewGuid()).tmp"
     [System.IO.Compression.ZipFile]::CreateFromDirectory($folder, $pendingZip, [System.IO.Compression.CompressionLevel]::Optimal, $true)
     Move-Item $pendingZip $zip -Force

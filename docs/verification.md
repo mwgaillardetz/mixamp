@@ -1,8 +1,8 @@
-# CrateDeck preview verification
+# Mixamp preview verification
 
 ## Build and evidence
 
-CrateDeck 0.1.0-preview.1 targets net10.0-windows10.0.22621.0 and win-x64. The build used SDK 10.0.404, runtime and Windows Desktop 10.0.15, Windows SDK projection 10.0.22621.57, Microsoft.Data.Sqlite 10.0.15, SQLitePCLRaw 2.1.13 and TagLibSharp 2.3.0. The published folder contains x64 coreclr, WPF graphics, hostfxr and e_sqlite3 native libraries. The package script checks these and the WinRT projection. No account or server credential was supplied.
+Mixamp 0.1.0-preview.1 targets net10.0-windows10.0.22621.0 and win-x64. The build used SDK 10.0.404, runtime and Windows Desktop 10.0.15, Windows SDK projection 10.0.22621.57, Microsoft.Data.Sqlite 10.0.15, SQLitePCLRaw 2.1.13 and TagLibSharp 2.3.0. The published folder contains x64 coreclr, WPF graphics, hostfxr and e_sqlite3 native libraries. The package script checks these and the WinRT projection. No account or server credential was supplied.
 
 The Linux tests use the production catalog, cue store, Plex HTTP adapter, album edit operation, deletion operation, tag checker and replacement journal. They exercise a Python loopback service that generates its own disposable files. A dropped DELETE response exposed an actual replay inside .NET’s HTTP transport. Counting requests on the fixture verified the fix. Permission checks, fresh part enumeration and a second scope check precede the single mutation. A missing metadata item after the request supplies server confirmation.
 
@@ -47,7 +47,7 @@ File saves read and hash the selected Plex part before replacing its mapped coun
 
 - Plex discovery selects HTTPS connections, including secure relay. Playback requires one unambiguous media part. HLS negotiation, native codecs and output timing have only been compiled against the Windows SDK here.
 - Cues identify a recording using its Plex GUID, duration, part paths and byte sizes. An ID change can reuse a range on one matching catalog identity. Ambiguous matches need manual cue entry. A replacement that preserves every identity attribute can evade detection.
-- A custom cue is local to CrateDeck. Queue state is saved on a clean close or server switch. Startup opens the last cached library. Reconnect before streaming.
+- A custom cue is local to Mixamp. Queue state is saved on a clean close or server switch. Startup opens the last cached library. Reconnect before streaming.
 - For metadata, unsupported server field scopes are disabled. Fields displayed by Plex may differ from the embedded file, particularly with locked fields or a different library metadata preference. The refresh operation is asynchronous on the server.
 - The column selectors show up to 256 choices per level. Songs and album/artist drill-downs page from SQLite. Large Plex playlists currently use the returned server window. Thumbnails are fetched only for the current playback item. There is no persistent artwork cache.
 - The Studio inspector opens the shared editor. Real audio level meters are omitted. The Wine captures exercise selection and layout changes. Full keyboard, high-contrast and focus/scroll continuity at different native scale factors remain open.

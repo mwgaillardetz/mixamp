@@ -91,7 +91,7 @@ def handler(lib):
             if self.command != "GET" and lib.options.deny_writes:
                 return self.respond(403)
             if path == "/":
-                return self.respond(200, dict(machineIdentifier="cratedeck-demo", allowMediaDeletion=not lib.options.deny_writes))
+                return self.respond(200, dict(machineIdentifier="mixamp-demo", allowMediaDeletion=not lib.options.deny_writes))
             if path == "/fixture/redirect":
                 self.send_response(302)
                 self.send_header("Location",f"http://localhost:{self.server.server_port}/fixture/redirected")
@@ -110,7 +110,7 @@ def handler(lib):
             if path == "/fixture/deletes":
                 return self.respond(200,dict(count=lib.delete_requests))
             if path == "/identity":
-                return self.respond(200, dict(machineIdentifier="cratedeck-demo"))
+                return self.respond(200, dict(machineIdentifier="mixamp-demo"))
             if path == "/library/sections":
                 return self.respond(200, dict(Directory=[dict(type="artist", key="1", title="Demo · Listening room")]))
             if path == "/:/prefs":
@@ -237,7 +237,7 @@ if __name__ == "__main__":
     if args.marker:
         marker(args.marker)
     else:
-        with tempfile.TemporaryDirectory(prefix="cratedeck-demo-",dir=args.fixture_parent) as root:
+        with tempfile.TemporaryDirectory(prefix="mixamp-demo-",dir=args.fixture_parent) as root:
             lib = Library(Path(root), args.count, args)
             with ThreadingHTTPServer(("127.0.0.1", args.port), handler(lib)) as server:
                 print(f"Disposable demo ready on loopback port {server.server_port}", flush=True)

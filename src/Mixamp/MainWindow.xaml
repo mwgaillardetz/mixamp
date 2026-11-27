@@ -1,4 +1,4 @@
-<Window x:Class="CrateDeck.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="CrateDeck" Width="1100" Height="710" MinWidth="640" MinHeight="260" Background="{DynamicResource Canvas}" Foreground="{DynamicResource Ink}" FontFamily="Segoe UI" PreviewKeyDown="Keys">
+<Window x:Class="Mixamp.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Mixamp" Width="1100" Height="710" MinWidth="640" MinHeight="260" Background="{DynamicResource Canvas}" Foreground="{DynamicResource Ink}" FontFamily="Segoe UI" PreviewKeyDown="Keys">
  <Window.Resources>
   <Style x:Key="Key" TargetType="Button">
    <Setter Property="Background" Value="{DynamicResource Paper}"/><Setter Property="Foreground" Value="{DynamicResource Ink}"/><Setter Property="BorderBrush" Value="{DynamicResource Line}"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Padding" Value="12,6"/><Setter Property="Margin" Value="2"/><Setter Property="Template"><Setter.Value>
@@ -24,7 +24,7 @@
   <Border DockPanel.Dock="Bottom" Background="{DynamicResource Side}" BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0" Padding="12,5"><TextBlock Text="{Binding Status}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Status}" Foreground="{DynamicResource Muted}"/></Border>
   <Grid x:Name="Body"><Grid.ColumnDefinitions><ColumnDefinition x:Name="RailWidth" Width="166"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
    <Border x:Name="Rail" Background="{DynamicResource Side}" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,1,0" Padding="10,15">
-    <StackPanel><StackPanel Orientation="Horizontal" Margin="4,0,0,18"><Path Fill="{DynamicResource Accent}" Stretch="Uniform" Width="22" Height="23" Data="M0,2 L6,0 12,2 12,17 6,15 0,17 Z M15,2 L21,0 27,2 27,17 21,15 15,17 Z"/><TextBlock Text="CrateDeck" Margin="7,0,0,0" FontWeight="Bold" FontSize="18"/></StackPanel><StackPanel x:Name="Sources"/></StackPanel>
+    <StackPanel><StackPanel Orientation="Horizontal" Margin="4,0,0,18"><Path Fill="{DynamicResource Accent}" Stretch="Uniform" Width="22" Height="23" Data="M0,2 L6,0 12,2 12,17 6,15 0,17 Z M15,2 L21,0 27,2 27,17 21,15 15,17 Z"/><TextBlock Text="Mixamp" Margin="7,0,0,0" FontWeight="Bold" FontSize="18"/></StackPanel><StackPanel x:Name="Sources"/></StackPanel>
    </Border>
    <DockPanel Grid.Column="1">
     <Grid DockPanel.Dock="Top" Margin="14,13"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>

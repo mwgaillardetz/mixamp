@@ -1,6 +1,6 @@
 """Run on a quiet Windows desktop with an active output endpoint and the loopback mock running.
 pip install soundcard numpy
-python tools/measure_audio.py artifacts/mixamp-win-x64/CrateDeck.exe artifacts
+python tools/measure_audio.py artifacts/mixamp-win-x64/Mixamp.exe artifacts
 """
 import argparse
 import json

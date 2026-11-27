@@ -2,7 +2,7 @@
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 Push-Location (Join-Path $PSScriptRoot '..')
-$name = 'CrateDeckFixture-' + [guid]::NewGuid().ToString('N')
+$name = 'MixampFixture-' + [guid]::NewGuid().ToString('N')
 $root = Join-Path ([IO.Path]::GetTempPath()) $name
 $server = $null
 $created = $false

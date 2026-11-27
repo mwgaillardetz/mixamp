@@ -1,6 +1,6 @@
 using System.Windows.Media;
 
-namespace CrateDeck;
+namespace Mixamp;
 
 public partial class MainWindow
 {
@@ -188,7 +188,7 @@ public partial class MainWindow
         string? error = null;
         try
         {
-            if ((await api.Call("/identity")).Str("machineIdentifier") != "cratedeck-demo")
+            if ((await api.Call("/identity")).Str("machineIdentifier") != "mixamp-demo")
                 throw new IOException("Expected the loopback fixture.");
             var t = await api.Fresh("1");
             if (route is not ("http" or "local"))
@@ -202,7 +202,7 @@ public partial class MainWindow
                 completed.TrySetResult();
             };
             engine.Failed += m => completed.TrySetException(new IOException(m));
-            var scope = new Scope("demo", "cratedeck-demo", "1");
+            var scope = new Scope("demo", "mixamp-demo", "1");
             vm.Store.SaveCue(scope, t, new Cue(42000, 248000));
             await engine.Start(
                 t,
@@ -280,7 +280,7 @@ public partial class MainWindow
                 using var stream = File.Create(Path.Combine(destination, name + ".png"));
                 png.Save(stream);
             }
-            var selectedTrack = (CrateDeck.Core.Track)selected;
+            var selectedTrack = (Mixamp.Core.Track)selected;
             await ExerciseEditor(selectedTrack);
             Application.Current.Shutdown(0);
         }
@@ -305,7 +305,7 @@ public partial class MainWindow
         return null;
     }
 
-    async Task ExerciseEditor(CrateDeck.Core.Track track)
+    async Task ExerciseEditor(Mixamp.Core.Track track)
     {
         Exception? failure = null;
         var dispatch = Dispatcher.InvokeAsync(

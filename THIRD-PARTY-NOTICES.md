@@ -1,4 +1,4 @@
-# CrateDeck third-party components
+# Mixamp third-party components
 
 The self-contained distribution includes Microsoft .NET, the Windows Desktop runtime and WPF 10.0.15. Their licenses and upstream third-party notices are in the notices directory. Microsoft.Data.Sqlite and its Core assembly 10.0.15 use the MIT license. The Windows SDK .NET projection uses the Microsoft Windows SDK distribution terms. C#/WinRT supplies WinRT.Runtime under the MIT license. [Windows SDK terms](https://aka.ms/WinSDKLicenseURL)
 
@@ -6,4 +6,4 @@ SQLitePCLRaw 2.1.13 uses Apache License 2.0. Its e_sqlite3 native library includ
 
 TagLibSharp 2.3.0 is an unmodified, separately replaceable managed library. Copyright Brian Nickel and other TagLibSharp contributors. LGPL 2.1 is included in notices. [Corresponding upstream source](https://github.com/mono/taglib-sharp/tree/TaglibSharp-2.3.0.0)
 
-Plex is a trademark of its respective owner. CrateDeck is an independent client. Audio fixtures are generated sine tones. Python, Mutagen and FFmpeg are development tools and are not bundled in the player.
+Plex is a trademark of its respective owner. Mixamp is an independent client. Audio fixtures are generated sine tones. Python, Mutagen and FFmpeg are development tools and are not bundled in the player.

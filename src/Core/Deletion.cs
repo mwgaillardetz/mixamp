@@ -1,6 +1,6 @@
 using System.Net;
 
-namespace CrateDeck.Core;
+namespace Mixamp.Core;
 
 public record DeletionReview(string Server, string Library, Track Track);
 

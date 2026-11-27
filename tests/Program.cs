@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using CrateDeck.Core;
+using Mixamp.Core;
 
 int checks = 0;
 void Check(bool condition, string message)
@@ -24,7 +24,7 @@ void Reject(Action act, string message)
     }
     throw new Exception(message);
 }
-var dir = Directory.CreateTempSubdirectory("cratedeck-check-");
+var dir = Directory.CreateTempSubdirectory("mixamp-check-");
 try
 {
     var scope = new Scope("account", "fixture", "1");
@@ -117,7 +117,7 @@ try
         string scenario = args[Array.IndexOf(args, "--scenario") + 1];
         int port = int.Parse(args[Array.IndexOf(args, "--scenario") + 2]);
         using var mock = new Plex(new Uri("http://127.0.0.1:" + port), "test", "fixture-only");
-        var demo = new Scope("demo", "cratedeck-demo", "1");
+        var demo = new Scope("demo", "mixamp-demo", "1");
         if (scenario == "revoked")
         {
             try
@@ -262,7 +262,7 @@ try
     if (args.Contains("--mock"))
     {
         Check(
-            (await api.Call("/identity")).Str("machineIdentifier") == "cratedeck-demo",
+            (await api.Call("/identity")).Str("machineIdentifier") == "mixamp-demo",
             "verified disposable fixture identity"
         );
         var library = new Library(api, scope);
@@ -318,7 +318,7 @@ try
                 && (await api.Fresh("1")).Parts.Length == 1,
             "playlist removal retains source"
         );
-        var deletion = new Deletion(api, new Scope("demo", "cratedeck-demo", "1"), true);
+        var deletion = new Deletion(api, new Scope("demo", "mixamp-demo", "1"), true);
         long submitted = (await api.Call("/fixture/deletes")).Num("count");
         var review = await deletion.Review("4");
         Check(
@@ -381,7 +381,7 @@ try
         if (
             !System.Text.RegularExpressions.Regex.IsMatch(
                 share,
-                @"^\\\\localhost\\CrateDeckFixture-[a-f0-9]{32}$"
+                @"^\\\\localhost\\MixampFixture-[a-f0-9]{32}$"
             )
         )
             throw new ArgumentException("Expected the isolated loopback fixture share.");
@@ -390,7 +390,7 @@ try
             "disposable-smb",
             "fixture-only"
         );
-        var target = new Scope("test", "cratedeck-demo", "1");
+        var target = new Scope("test", "mixamp-demo", "1");
         Check(
             (await fixture.Call("/identity")).Str("machineIdentifier") == target.Server,
             "isolated SMB fixture server"
@@ -403,7 +403,7 @@ try
         );
         var source = MappedFiles.Resolve(item.Parts.Single().File, [new Mapping("/demo", share)]);
         string beforeHash = Replacement.Digest(source);
-        var writer = new CrateDeck.FileWriter(store, target, fixture);
+        var writer = new Mixamp.FileWriter(store, target, fixture);
         string result = await writer.Write(item, new() { ["ALBUMARTIST"] = "Various Artists" });
         using (var media = TagLib.File.Create(source))
             Check(
@@ -413,7 +413,7 @@ try
             );
         Check(
             Directory
-                .EnumerateFiles(Path.GetDirectoryName(source)!, ".cratedeck-*.bak")
+                .EnumerateFiles(Path.GetDirectoryName(source)!, ".mixamp-*.bak")
                 .Any(f => Replacement.Digest(f) == beforeHash),
             "SMB replacement retains verified backup"
         );

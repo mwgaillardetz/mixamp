@@ -2,7 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json.Nodes;
 
-namespace CrateDeck.Core;
+namespace Mixamp.Core;
 
 public sealed class Plex : IDisposable
 {
@@ -21,7 +21,7 @@ public sealed class Plex : IDisposable
             Timeout = TimeSpan.FromSeconds(20),
         };
         client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
-        client.DefaultRequestHeaders.Add("X-Plex-Product", "CrateDeck");
+        client.DefaultRequestHeaders.Add("X-Plex-Product", "Mixamp");
         client.DefaultRequestHeaders.Add("X-Plex-Client-Identifier", identifier);
         if (token != null)
             client.DefaultRequestHeaders.Add("X-Plex-Token", token);

@@ -2,7 +2,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
 
-namespace CrateDeck.Core;
+namespace Mixamp.Core;
 
 public sealed class Store
 {
