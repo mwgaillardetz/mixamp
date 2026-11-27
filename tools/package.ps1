@@ -36,7 +36,7 @@ try {
     New-Item -Force -ItemType Directory $folder | Out-Null
     Push-Location launcher
     try {
-        & $compiler -m ziglang cc -target x86_64-windows-gnu -Os -s -municode -mwindows main.c icon.rc -o (Join-Path $folder 'CrateDeck.exe')
+        & $compiler -m ziglang cc -target x86_64-windows-gnu -Os -s -municode "-Wl,--subsystem,windows" main.c icon.rc -o (Join-Path $folder 'CrateDeck.exe')
     } finally { Pop-Location }
     dotnet publish src/CrateDeck -c Release -r win-x64 --self-contained true --no-restore -o $payload
     Copy-Item README.md,THIRD-PARTY-NOTICES.md,notices,docs -Destination $folder -Recurse -Force
