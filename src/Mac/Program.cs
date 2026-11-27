@@ -66,16 +66,40 @@ internal static class Program
             string url=web.Urls.Single()+"/launch/"+ticket;
             if(fixture){Console.WriteLine(url);web.WaitForShutdownAsync().GetAwaiter().GetResult();return;}
             var window = new PhotinoWindow().SetTitle("Mixamp").SetUseOsDefaultSize(false).SetSize(1120,720).SetMinSize(740,400);
+            bool menuTestStarted=false,glassTestStarted=false;
             window.RegisterWebMessageReceivedHandler((_,message) =>
             {
-                if (!OperatingSystem.IsMacOS() || !message.StartsWith("theme:",StringComparison.Ordinal)) return;
+                if (!OperatingSystem.IsMacOS()) return;
+                if (message.StartsWith("menus:",StringComparison.Ordinal)) {window.Invoke(()=>MacTitleBar.InstallMenus(window,message[6..]));return;}
+                if (message.StartsWith("checks:",StringComparison.Ordinal)) {window.Invoke(()=>{
+                    MacTitleBar.MenuChecks(message[7..]);
+                    if(checkWindow && !menuTestStarted)
+                    {
+                        menuTestStarted=true;
+                        if(MacTitleBar.CheckMenusAndSelectTheme()) Console.WriteLine("Native menus ready");
+                    }
+                });return;}
+                bool glass=message.StartsWith("glass:",StringComparison.Ordinal);
+                if (!glass && !message.StartsWith("theme:",StringComparison.Ordinal)) return;
                 var theme = ThemeCatalog.All.FirstOrDefault(t => t.Name == message[6..]);
                 if (theme != null) window.Invoke(() =>
                 {
-                    if (MacTitleBar.Apply(theme) && checkWindow) Console.WriteLine("Window theme applied");
+                    bool applied=MacTitleBar.Apply(theme,glass,out bool active);
+                    window.SendWebMessage(active?"glass-active:on":"glass-active:off");
+                    if (applied && checkWindow)
+                    {
+                        Console.WriteLine("Window theme applied");
+                        if(menuTestStarted && theme.Name=="Velvet Mocha" && !glassTestStarted)
+                        {
+                            Console.WriteLine("Native theme action applied");
+                            glassTestStarted=true;
+                            MacTitleBar.CheckGlassAction();
+                        }
+                        if(glassTestStarted && active) Console.WriteLine("Native glass applied");
+                    }
                 });
             });
-            window.Load(url).WaitForClose();
+            window.SetMediaAutoplayEnabled(true).Load(url).WaitForClose();
         }
         finally {web.StopAsync().GetAwaiter().GetResult();web.DisposeAsync().AsTask().GetAwaiter().GetResult();}
     }

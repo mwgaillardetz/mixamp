@@ -8,6 +8,7 @@ const fields = [
 ];
 let columns = new Set(["title","artistDisplay","album","length"]), source=[], visible=[], catalog=[], lists=[], queue=[];
 let selection=new Set(), anchor=-1, cursor=-1, section="Songs", listId="", sort="title", direction=1, playing=null, queueAt=-1;
+let glassWanted=false;
 let themes=[], currentTheme="", spectrumInk="#16696B";
 let eqMode="Auto", showBars=true, ctx, filters, preamp, analyser, fft, frame=0, lastFrame=0, sequence=0, eqSeq=0, clipEnd=null;
 const collator=new Intl.Collator(undefined,{numeric:true,sensitivity:"base"});
@@ -27,20 +28,42 @@ function popup(entries,x,y){
 }
 document.addEventListener("pointerdown",e=>{if(!menu.contains(e.target))menu.hidden=true;});
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!menu.hidden){e.preventDefault();menu.hidden=true;}});
-function tool(id,entries){$(id).onclick=e=>{const r=e.currentTarget.getBoundingClientRect();popup(entries(),r.left,r.bottom+2);};}
+const toolEntries=new Map();
+function tool(id,entries){toolEntries.set(id,entries);$(id).onclick=e=>{const r=e.currentTarget.getBoundingClientRect();popup(entries(),r.left,r.bottom+2);};}
 function applyTheme(entry) {
   if(!entry)return;
   currentTheme=entry.name;
+  $("themePicker").value=entry.name;
   const root=document.documentElement;
   root.dataset.theme=entry.name;
   for(const [key,value] of Object.entries(entry.palette))root.style.setProperty("--"+key,value);
   root.style.colorScheme=["Silver Halide","Cyanotype"].includes(entry.name)?"light":"dark";
-  window.external?.sendMessage?.("theme:"+entry.name);
+  syncGlass();
   const classic=entry.name==="Bitstream 98", seek=$("seek");
   const seekParent=document.querySelector(classic?"header":".deck");
   if(seek.parentElement!==seekParent)seekParent.append(seek);
-  spectrumInk=entry.palette.accent;
+  spectrumInk=entry.palette.accent;document.dispatchEvent(new Event("mixamp-theme"));
 }
+const reducedGlass=matchMedia("(prefers-reduced-transparency: reduce), (forced-colors: active)");
+function syncGlass(){
+  const on=glassWanted&&!reducedGlass.matches;
+  if(window.external?.sendMessage)window.external.sendMessage((on?"glass:":"theme:")+currentTheme);
+  else document.documentElement.classList.toggle("glass",on);
+}
+reducedGlass.addEventListener("change",()=>{if(currentTheme)syncGlass();});
+async function toggleGlass(){
+  const on=!glassWanted;
+  await call("setting",{id:"glass",value:on?"on":"off"});
+  glassWanted=on;syncGlass();
+}
+async function chooseTheme(name){
+  const picker=$("themePicker");
+  try{
+    await call("setting",{id:"theme",value:name});
+    applyTheme(themes.find(entry=>entry.name===name));
+  }finally{picker.value=currentTheme;}
+}
+$("themePicker").onchange=run(e=>chooseTheme(e.target.value));
 $("view").onclick=()=>{
   const anchor=$("view").getBoundingClientRect();
   const folder=document.createElement("details"), heading=document.createElement("summary");
@@ -53,7 +76,7 @@ $("view").onclick=()=>{
     choice.title=entry.description;
     choice.onclick=run(async()=>{
       menu.hidden=true;$("view").focus();
-      await call("setting",{id:"theme",value:entry.name});applyTheme(entry);
+      await chooseTheme(entry.name);
     });
     folder.append(choice);
   }
@@ -69,7 +92,10 @@ $("view").onclick=()=>{
     await call("setting",{id:"font",value:enabled?"theme":"ubuntu"});
     root.classList.toggle("ubuntuFont",!enabled);
   });
-  menu.replaceChildren(folder,font);menu.hidden=false;
+  const glass=document.createElement("button");glass.setAttribute("role","menuitemcheckbox");
+  glass.setAttribute("aria-checked",String(glassWanted));glass.textContent="Glass appearance";
+  glass.onclick=run(async()=>{menu.hidden=true;$("view").focus();await toggleGlass();});
+  menu.replaceChildren(folder,font,glass);menu.hidden=false;
   const position=()=>{menu.style.left=Math.max(2,Math.min(anchor.left,innerWidth-menu.offsetWidth-4))+"px";
     menu.style.top=Math.max(2,Math.min(anchor.bottom+2,innerHeight-menu.offsetHeight-4))+"px";};
   folder.ontoggle=position;position();heading.focus();
@@ -103,7 +129,7 @@ function refreshView(){
   if(sort)visible.sort((a,b)=>direction*(typeof a[key]==="number"?a[key]-b[key]:collator.compare(a[key]||"",b[key]||"")));
   selection.clear();anchor=cursor=-1;grid.scrollTop=0;$("spacer").style.height=visible.length*26+"px";headers();render();
 }
-let radioView=0, radioQueue="", stationName="";
+let radioView=0, radioQueue="", stationName="", sonicQueue=false;
 function inQueue(){return section==="Up Next" && !listId;}
 function show(name,rows,id=""){
   ++radioView;
@@ -131,17 +157,19 @@ function select(i,e){
   cursor=i;
   if(e.shiftKey&&anchor>=0){selection.clear();for(let j=Math.min(i,anchor);j<=Math.max(i,anchor);j++)selection.add(j);}
   else if(e.metaKey||e.ctrlKey){if(selection.has(i))selection.delete(i);else selection.add(i);anchor=i;}
-  else{selection=new Set([i]);anchor=i;} render();
+  else{selection=new Set([i]);anchor=i;}
+  for(const row of $("rows").children)row.classList.toggle("selected",selection.has(Number(row.dataset.index)));
 }
 grid.onclick=e=>{const i=indexAt(e);if(i>=0){grid.focus({preventScroll:true});select(i,e);}};
-grid.ondblclick=run(async e=>{const i=indexAt(e);if(i>=0)await startSelection();});
+grid.ondblclick=run(async e=>{const i=indexAt(e);if(i>=0){select(i,{});await startSelection();}});
 grid.oncontextmenu=e=>{const i=indexAt(e);if(i<0)return;e.preventDefault();if(!selection.has(i))select(i,e);
-  popup([["Play",startSelection],["Add to queue",addQueue],["Add to playlist",addList],...edits()],e.clientX,e.clientY);};
+  popup([["Play",startSelection],["Sonically similar radio",selection.size===1?sonicRadio:null],["Add to queue",addQueue],["Add to playlist",addList],...edits()],e.clientX,e.clientY);};
 function chosen(){const tracks=[...selection].sort((a,b)=>a-b).map(i=>visible[i]).filter(Boolean);if(!tracks.length)throw Error("Select tracks first.");return tracks;}
 function one(){const t=chosen();if(t.length!==1)throw Error("Select one track.");return t[0];}
 function initAudio(){
-  if(ctx)return;
-  ctx=new (window.AudioContext||window.webkitAudioContext)();const src=ctx.createMediaElementSource(audio);
+  const Audio=window.AudioContext||window.webkitAudioContext;
+  if(ctx||!Audio)return;
+  ctx=new Audio();const src=ctx.createMediaElementSource(audio);
   filters=[120,1000,6500].map(f=>{const b=ctx.createBiquadFilter();b.type="peaking";b.frequency.value=f;b.Q.value=.9;return b;});
   preamp=ctx.createGain();analyser=ctx.createAnalyser();analyser.fftSize=1024;fft=new Uint8Array(analyser.frequencyBinCount);
   src.connect(filters[0]);filters[0].connect(filters[1]);filters[1].connect(filters[2]);filters[2].connect(preamp);preamp.connect(analyser);analyser.connect(ctx.destination);
@@ -163,7 +191,7 @@ function showCover(url){
   img.onerror=()=>img.remove();slot.append(img);img.src=url;
 }
 async function start(track){
-  initAudio();await ctx.resume();const seq=++sequence;
+  const seq=++sequence;initAudio();await ctx?.resume();if(seq!==sequence)return;
   audio.pause();$("status").textContent="Opening "+track.title+"…";
   const data=await call("prepare",{id:track.id});if(seq!==sequence)return;
   playing=data.track;clipEnd=data.cue.end==null?null:data.cue.end/1000;await setTone();if(seq!==sequence)return;
@@ -181,7 +209,7 @@ async function startSelection(){const tracks=chosen();if(inQueue()){queueAt=queu
 async function advance(step){const n=queueAt+step;
   if(n===queue.length && radioQueue && queue.length){
     const id=radioQueue, last=queue.at(-1).queueItem;
-    const more=await call("continueRadio",{id,value:last});
+    const more=sonicQueue ? await call("continueSonic",{id,value:last,extra:queue.at(-1).id,ids:queue.map(t=>t.id)}) : await call("continueRadio",{id,value:last});
     if(id!==radioQueue || n!==queueAt+step)return;
     const anchor=more.findIndex(t=>t.queueItem===last), seen=new Set(queue.map(t=>t.queueItem));
     if(anchor>=0) queue.push(...more.slice(anchor+1).filter(t=>t.queueItem&&!seen.has(t.queueItem)));
@@ -199,7 +227,7 @@ async function resumeAudio(){
     if(queue.length){queueAt=Math.max(0,queueAt);return start(queue[queueAt]);}
     return;
   }
-  await ctx.resume();await audio.play();
+  await ctx?.resume();await audio.play();
 }
 function toggleAudio(){if(audio.paused)return resumeAudio();audio.pause();}
 $("prev").onclick=run(()=>advance(-1));$("next").onclick=run(()=>advance(1));$("play").onclick=run(toggleAudio);
@@ -227,18 +255,24 @@ audio.ontimeupdate=()=>{$("clock").textContent=time(audio.currentTime);$("seek")
 audio.onended=run(()=>{updateTransport(false);return advance(1);});
 audio.onerror=()=>{updateTransport(false);$("status").textContent="The audio decoder could not open this track.";};
 function bars(ts){
-  if(audio.paused||!showBars)return;
-  if(ts-lastFrame>=50){lastFrame=ts;const c=$("bars").getContext("2d");c.clearRect(0,0,208,36);analyser.getByteFrequencyData(fft);c.fillStyle=spectrumInk;
-    for(let i=0;i<32;i++){const bin=Math.max(1,Math.floor(Math.pow(fft.length-1,i/31))),h=fft[bin]*36/255;c.fillRect(i*6,36-h,2,h);}}
+  if(audio.paused||!showBars||!analyser)return;
+  if(ts-lastFrame>=50){lastFrame=ts;const canvas=$("bars"),scale=window.devicePixelRatio||1;
+    const w=Math.max(1,Math.round(canvas.clientWidth*scale)),h=Math.max(1,Math.round(canvas.clientHeight*scale));
+    if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}
+    const c=canvas.getContext("2d");c.clearRect(0,0,w,h);analyser.getByteFrequencyData(fft);c.fillStyle=spectrumInk;
+    for(let i=0;i<32;i++){const bin=Math.max(1,Math.floor(Math.pow(fft.length-1,i/31))),height=fft[bin]*h/255;c.fillRect(i*w/32,h-height,Math.min(2*scale,w/32),height);}}
   frame=requestAnimationFrame(bars);
 }
 audio.onplaying=()=>{updateTransport(true);cancelAnimationFrame(frame);frame=requestAnimationFrame(bars);};
-audio.onpause=()=>{updateTransport(false);cancelAnimationFrame(frame);$("bars").getContext("2d").clearRect(0,0,208,36);};
+audio.onpause=()=>{updateTransport(false);cancelAnimationFrame(frame);$("bars").getContext("2d").clearRect(0,0,$("bars").width,$("bars").height);};
 async function playlist(p){show(p.name,await call("playlist",{id:p.id}),p.id);}
 async function loadLists(){lists=await call("playlists");$("lists").replaceChildren();for(const p of lists){
   const b=document.createElement("button");b.textContent=p.name;b.dataset.id=p.id;b.onclick=run(()=>playlist(p));b.oncontextmenu=e=>{e.preventDefault();e.stopPropagation();popup([["New playlist",newList],["Remove playlist",async()=>{await ask("Remove "+p.name+"?");await call("removeList",{id:p.id});await reload();}]],e.clientX,e.clientY);};$("lists").append(b);}}
 async function newList(){const value=await ask("New playlist",{value:""});await call("newList",{value});$("folders").open=true;await loadLists();}
-async function addList(){const ids=chosen().map(t=>t.id);const id=await ask("Add to playlist",{choices:lists});await call("addList",{id,ids});$("status").textContent="Playlist updated";}
+async function addList(){const ids=chosen().map(t=>t.id);await loadLists();
+  let id=await ask("Add to playlist",{choices:[...lists,{id:"new",name:"New playlist…"}]});
+  if(id==="new"){const value=await ask("New playlist",{value:""});id=await call("newList",{value});await loadLists();}
+  await call("addList",{id,ids});$("status").textContent="Playlist updated";}
 $("folders").oncontextmenu=e=>{e.preventDefault();popup([["New playlist",newList]],e.clientX,e.clientY);};
 $("songs").onclick=()=>show("Songs",catalog);$("queue").onclick=()=>show("Up Next",queue);
 function radioButton(label, action) {
@@ -265,11 +299,17 @@ async function browseRadio() {
   });
   pane.querySelector(".station")?.focus();
 }
+async function sonicRadio(){
+  const track=one(),view=++radioView;
+  await showStation(await call("sonic",{id:track.id}),view,track.title+" Radio",true);
+}
 async function startStation(id,ids,view,name) {
-  const result=await call("startRadio",{id,ids});
+  await showStation(await call("startRadio",{id,ids}),view,name);
+}
+async function showStation(result,view,name,sonic=false){
   if(radioView!==view)return;
   if(!result.tracks.length)throw Error("Plex returned an empty station.");
-  queue=result.tracks;radioQueue=result.id;stationName=name;queueAt=0;
+  queue=result.tracks;sonicQueue=sonic;radioQueue=result.id;stationName=name;queueAt=0;
   show("Up Next",queue);grid.focus();select(0,{});
   await start(queue[0]);
 }
@@ -323,7 +363,44 @@ async function review(action){
   await apply(await call("review",{id:action,ids,value,extra}));
 }
 async function historyAction(action){await apply(await call(action));}
-function edits(){return [["Undo",()=>historyAction("undo")],["Redo",()=>historyAction("redo")],["Rename track title",async()=>{const t=one();await call("title",{id:t.id,value:await ask("Track title",{value:t.title})});await reload();}],
+async function editMetadata(){
+  const tracks=chosen(), data=await call("metadata",{ids:tracks.map(t=>t.id)});
+  const dlg=$("review"),body=$("reviewBody"),rows=[];
+  dlg.querySelector("h2").textContent=tracks.length===1?"Edit · "+tracks[0].title:"Edit "+tracks.length+" tracks";
+  body.replaceChildren();
+  const help=document.createElement("p");help.textContent="Checked fields apply to every selected track. Enter one tag per line.";body.append(help);
+  const target=document.createElement("select");target.setAttribute("aria-label","Save target");
+  target.add(new Option("Plex library","plex"));target.add(new Option("Mapped audio file tags","files"));
+  target.options[1].disabled=!data.fileTags;body.append(target);
+  const fields=document.createElement("div");body.append(fields);
+  const fileFields=[["TITLE","Title","title"],["ARTIST","Track artist","artistDisplay"],["ALBUM","Album","album"],
+    ["ALBUMARTIST","Album artist","artist"],["GENRE","Genre","genre"],["DATE","Year","year"],
+    ["DISCNUMBER","Disc number","disc"],["TRACKNUMBER","Track number","number"]].map(([key,label,prop])=>{
+      const first=tracks[0][prop];return {key,label,value:tracks.every(t=>t[prop]===first)?String(first??""):null};
+    });
+  function draw(){
+    fields.replaceChildren();rows.length=0;
+    for(const field of target.value==="files"?fileFields:data.fields){
+      const row=document.createElement("div"),label=document.createElement("label"),check=document.createElement("input");
+      check.type="checkbox";label.append(check,field.label);
+      const input=document.createElement(field.tags?"textarea":"input");
+      input.value=field.value??"";input.placeholder=field.value===null?"Mixed values":"";
+      input.setAttribute("aria-label",field.label);input.oninput=()=>check.checked=true;
+      row.className="metadataField";row.append(label,input);fields.append(row);rows.push({field,check,input});
+    }
+  }
+  target.onchange=draw;draw();
+  dlg.showModal();
+  const ok=await new Promise(resolve=>{
+    const close=value=>{dlg.oncancel=null;dlg.close();resolve(value);};
+    $("confirm").textContent="Save changes";$("confirm").onclick=()=>close(true);$("cancel").onclick=()=>close(false);
+    dlg.oncancel=e=>{e.preventDefault();close(false);};
+  });
+  $("confirm").textContent="Continue";
+  const patch=Object.fromEntries(rows.filter(r=>r.check.checked).map(r=>[r.field.key,r.input.value]));
+  if(ok&&Object.keys(patch).length){await call(target.value==="files"?"saveFileMetadata":"saveMetadata",{id:data.id,value:JSON.stringify(patch)});await reload();}
+}
+function edits(){return [["Undo",()=>historyAction("undo")],["Redo",()=>historyAction("redo")],["Edit…",editMetadata],["Rename track title",async()=>{const t=one();await call("title",{id:t.id,value:await ask("Track title",{value:t.title})});await reload();}],
   ["Edit file tags",async()=>{const t=one();const tags={TITLE:"title",ARTIST:"artistDisplay",ALBUM:"album",ALBUMARTIST:"artist",GENRE:"genre"};
     const key=await ask("File tag",{choices:Object.keys(tags).map(k=>({id:k,name:k}))});
     const value=await ask("Edit "+key.toLowerCase(),{value:t[tags[key]]||""});await call("editFile",{id:t.id,value:key,extra:value});await reload();}],
@@ -388,6 +465,46 @@ tool("library",()=>[["Add Plex Library",addPlexLibrary],["Sync",async()=>{await 
   ["Share mapping",async()=>{const value=await ask("Server music root",{value:"/music"});const extra=await ask("Mounted music folder",{value:"/Volumes/"});await call("mapping",{value,extra});}],
   ["New playlist",newList],[(showBars?"✓ ":"")+"Now Playing bars",async()=>{showBars=!showBars;$("bars").hidden=!showBars;await call("setting",{id:"bars",value:showBars?"on":"off"});cancelAnimationFrame(frame);if(showBars&&!audio.paused)frame=requestAnimationFrame(bars);}],
   ["Demo",async()=>{await call("demo");await reload();}]]);
+function installNativeMenus(){
+  const bridge=window.external;
+  if(!bridge?.receiveMessage||!bridge?.sendMessage)return;
+  const commands=new Map();
+  function item(label,action){const id=String(commands.size);commands.set(id,action);return {label,id};}
+  function actions(entries){return entries.map(([raw,fn])=>item(raw.replace(/^✓ /,""),fn));}
+  const groups=[
+    {label:"Library",children:actions(toolEntries.get("library")())},
+    {label:"Edit",children:actions(edits().filter(([label])=>label!=="Remove from playlist"))},
+    {label:"View",children:[
+      {label:"Themes",children:themes.map(t=>item(t.name,()=>chooseTheme(t.name)))},
+      item("Use Ubuntu font",async()=>{const root=document.documentElement,enabled=!root.classList.contains("ubuntuFont");
+        await call("setting",{id:"font",value:enabled?"ubuntu":"theme"});root.classList.toggle("ubuntuFont",enabled);}),
+      item("Glass appearance",toggleGlass)
+    ]},
+    {label:"EQ",children:actions(toolEntries.get("eq")())}
+  ];
+  function checks(){
+    const options=[...groups[0].children,...groups[2].children[0].children,...groups[2].children.slice(1),...groups[3].children];
+    const active=new Set([currentTheme,eqMode.startsWith("Custom|")?"Custom…":eqMode]);
+    if(document.documentElement.classList.contains("ubuntuFont"))active.add("Use Ubuntu font");
+    if(glassWanted)active.add("Glass appearance");
+    if(showBars)active.add("Now Playing bars");
+    bridge.sendMessage("checks:"+JSON.stringify(options.filter(e=>active.has(e.label)).map(e=>e.id)));
+  }
+  bridge.receiveMessage(run(async msg=>{
+    if(msg.startsWith("glass-active:")){document.documentElement.classList.toggle("glass",msg==="glass-active:on");return;}
+    if(msg==="menus-ready"){
+      syncGlass();
+      for(const id of ["library","edit","view","eq"])$(id).hidden=true;
+      checks();return;
+    }
+    if(!msg.startsWith("menu:")||$("review").open)return;
+    menu.hidden=true;
+    const action=commands.get(msg.slice(5));if(action)await action();
+    checks();
+  }));
+  document.addEventListener("mixamp-theme",checks);
+  bridge.sendMessage("menus:"+JSON.stringify(groups));
+}
 document.onkeydown=run(async e=>{
   if(e.defaultPrevented||$("review").open||!menu.hidden)return;
   const mod=e.metaKey||e.ctrlKey, key=e.key;
@@ -431,8 +548,10 @@ document.onkeydown=run(async e=>{
   if(i*26<grid.scrollTop)grid.scrollTop=i*26;
   else if((i+1)*26+28>grid.scrollTop+grid.clientHeight)grid.scrollTop=(i+1)*26+28-grid.clientHeight;
 });
-run(async()=>{const config=await call("config");themes=config.themes;document.documentElement.classList.toggle("ubuntuFont",config.ubuntuFont);applyTheme(themes.find(t=>t.name===config.theme));$("view").disabled=false;eqMode=config.eq;showBars=config.bars;$("bars").hidden=!showBars;
+run(async()=>{const config=await call("config");themes=config.themes;glassWanted=config.glass;
+  for(const entry of themes)$("themePicker").add(new Option(entry.name,entry.name));
+  document.documentElement.classList.toggle("ubuntuFont",config.ubuntuFont);applyTheme(themes.find(t=>t.name===config.theme));$("themePicker").disabled=false;$("view").disabled=false;eqMode=config.eq;showBars=config.bars;$("bars").hidden=!showBars;
   if(config.columns){const saved=config.columns.split("|").filter(k=>fields.some(f=>f[0]===k));if(saved.length)columns=new Set(saved);}
-  catalog=await call("cached");show("Songs",catalog);if(await call("resume"))await reload();
+  installNativeMenus();catalog=await call("cached");show("Songs",catalog);if(await call("resume"))await reload();
 })();
 setInterval(async()=>{try{const p=await (await fetch("/progress")).text();$("progress").textContent=p==="Ready"?"":p;}catch{}},1200);

@@ -48,7 +48,7 @@ jobs:
           trap 'kill "$pid" 2>/dev/null || true' EXIT
           for i in {1..60}; do
             if ! kill -0 "$pid" 2>/dev/null; then cat "$log"; exit 1; fi
-            if grep -q 'Library window initialized' "$log" && grep -q 'Window theme applied' "$log"; then exit 0; fi
+            if grep -q 'Library window initialized' "$log" && grep -q 'Native theme action applied' "$log" && grep -q 'Native glass applied' "$log"; then exit 0; fi
             sleep 1
           done
           cat "$log"

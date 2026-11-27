@@ -72,6 +72,9 @@ sealed partial class Session
                         Store.InvalidateMovedPaths(scope, [c.Track]);
                         scan = true;
                         break;
+                    case "Metadata":
+                        await TrackMetadata.Restore(api,scope,c);
+                        break;
                     case "Plex":
                         var track = await api.Fresh(c.Track.Id);
                         if (track.Identity != c.Track.Identity || track.LibraryId != scope.Library)

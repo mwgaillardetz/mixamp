@@ -32,6 +32,7 @@ class Library:
         self.redirect_hits = 0
         self.artist = {"a": "The Session Band", "b": "The Session Band"}
         self.timeline, self.entry = [], 0
+        self.mix_queue = []
         self.wav = root / "fixture.wav"
         marker(self.wav)
         self.versions = {}
@@ -131,6 +132,15 @@ def handler(lib):
                         for key, value in q.items():
                             if key.endswith(".value"):
                                 target[key[:-6]] = value
+                            elif match := re.fullmatch(r"(genre|mood|collection|label)\[(\d*)\]\.tag\.tag(-?)", key):
+                                element = match[1].capitalize()
+                                tags = [t["tag"] for t in lib.track(int(q["id"])).get(element, [])]
+                                if match[3]:
+                                    removed = {unquote(t) for t in value.split(",")}
+                                    tags = [t for t in tags if t not in removed]
+                                elif value not in tags:
+                                    tags.append(value)
+                                target[element] = [dict(tag=t) for t in tags]
                     return self.respond(200)
                 if kind in ("8", "9"):
                     groups = [("v", "Various Artists"), ("g", "The Session Band")] if kind == "8" else [("a", "Room Tapes"), ("b", "Studio B")]
@@ -154,6 +164,9 @@ def handler(lib):
                 return self.respond(200, {"Hub": [] if lib.options.no_station else [{"context": "hub.music.stations", "Metadata": [{"title": "Demo · Library Radio", "key": "/demo/station"}]}]})
             if path in ("/library/metadata/g", "/library/metadata/v"):
                 return self.respond(200, dict(Metadata=[dict(Stations=dict(Metadata=[] if lib.options.no_station else [dict(title="Demo · Artist Radio", key="/demo/station")]))]))
+            if match := re.fullmatch(r"/library/metadata/(\d+)/nearest",path):
+                seed = int(match[1])
+                return self.respond(200,dict(Metadata=[lib.track(i) for i in range(seed+1,min(seed+3,lib.count)+1) if i not in lib.deleted]))
             if path.startswith("/library/metadata/") and path.endswith(("/children", "/allLeaves")):
                 group = path.split("/")[3]
                 rows = [lib.track(i) for i in range(1, lib.count+1) if i not in lib.deleted]
@@ -212,6 +225,7 @@ def handler(lib):
                         ids = list(range(1, min(lib.count, 12)+1))
                     else:
                         return self.respond(400)
+                    lib.mix_queue = ids
                     return self.respond(200,dict(playQueueID=20,Metadata=[lib.track(i) | dict(playQueueItemID=str(j+1)) for j,i in enumerate(ids) if i not in lib.deleted]))
                 if path == "/playQueues" and not q.get("uri", "").endswith("/demo/station"):
                     return self.respond(400)
@@ -219,7 +233,11 @@ def handler(lib):
                 start = max(1, int(q.get("center", 1)))
                 return self.respond(200, dict(playQueueID=19, Metadata=[lib.track(live[j % len(live)]) | dict(playQueueItemID=str(j)) for j in range(start, start+5)] if live else []))
             if path == "/playQueues/20":
-                return self.respond(200, dict(playQueueID=20,Metadata=[]))
+                if self.command == "PUT":
+                    source = unquote(q["uri"].removeprefix("library:///directory/"))
+                    lib.mix_queue.extend(int(i) for i in source.removeprefix("/library/metadata/").split(","))
+                return self.respond(200,dict(playQueueID=20,Metadata=[lib.track(i) | dict(playQueueItemID=str(j+1))
+                    for j,i in enumerate(lib.mix_queue) if i not in lib.deleted]))
             if path == "/playlists" and self.command == "GET":
                 return self.respond(200, dict(Metadata=[dict(ratingKey=k, title=v[0]) for k, v in lib.playlists.items()]))
             if path.startswith("/playlists"):

@@ -134,10 +134,12 @@ sealed partial class Session : INotifyPropertyChanged
         ? Playlists.FirstOrDefault(p => p.Id == playlistId)?.Name ?? "Playlist"
         : IsStationQueue ? stationName + " · Up Next" : Section;
     string stationName = "";
+    bool sonicRadio;
     public bool IsStationQueue => Section == "Up Next" && stationName.Length > 0;
-    void SetStationName(string name)
+    void SetStationName(string name,bool sonic=false)
     {
         stationName = name;
+        sonicRadio = sonic;
         Changed(nameof(ViewTitle));
         Changed(nameof(IsStationQueue));
     }
@@ -218,6 +220,8 @@ sealed partial class Session : INotifyPropertyChanged
                     "Remove from playlist" or "Move up" => Section == "Playlists"
                         && Selected?.PlaylistItem.Length > 0,
                     "New playlist" => Api != null,
+                    "Sonically similar radio" => Api != null && Selected != null && Selection().Length == 1,
+                    "Edit…" => Api != null && Selected != null,
                     "Add to playlist" => Api != null && Selected != null,
                     "Song Info"
                     or "Play"
@@ -342,7 +346,7 @@ sealed partial class Session : INotifyPropertyChanged
         }
     }
 
-    record QueueState(Track[] Tracks, int Index, string QueueId, bool Repeat, string? StationName = null);
+    record QueueState(Track[] Tracks, int Index, string QueueId, bool Repeat, string? StationName = null,bool Sonic=false);
 
     void SaveQueue()
     {
@@ -350,7 +354,7 @@ sealed partial class Session : INotifyPropertyChanged
             Store.Set(
                 Scope.Key,
                 "queue",
-                JsonSerializer.Serialize(new QueueState(Queue.ToArray(), index, queueId, Repeat, stationName))
+                JsonSerializer.Serialize(new QueueState(Queue.ToArray(), index, queueId, Repeat, stationName, sonicRadio))
             );
     }
 
@@ -363,7 +367,7 @@ sealed partial class Session : INotifyPropertyChanged
             Queue.Add(t);
         index = state.Index;
         queueId = state.QueueId;
-        SetStationName(state.StationName ?? (queueId.Length > 0 ? "Radio" : ""));
+        SetStationName(state.StationName ?? (queueId.Length > 0 ? "Radio" : ""),state.Sonic);
         Repeat = state.Repeat;
     }
 
@@ -749,7 +753,12 @@ sealed partial class Session : INotifyPropertyChanged
         if (next >= Queue.Count && queueId != "" && Queue.Count > 0)
         {
             var last = Queue[^1].QueueItem;
-            var batch = (await Library.ContinueQueue(queueId, last))
+            var pendingQueue=queueId;
+            var window=sonicRadio
+                ? await Library.ContinueSonic(queueId,last,Queue[^1].Id,Queue.Select(t=>t.Id).ToArray())
+                : await Library.ContinueQueue(queueId,last);
+            if(queueId!=pendingQueue || next!=index+step)return;
+            var batch = window
                 .Items("Metadata")
                 .Select(Track.Read)
                 .ToList();
@@ -847,8 +856,9 @@ sealed partial class Session : INotifyPropertyChanged
         var api = Api;
         int request = ++radioPlayRequest;
         int browse = stationRequest;
+        string originSection = Section;
         var q = await Library.StartRadio(option, choices, Store);
-        if (api != Api || Section != "Radio" || browse != stationRequest || request != radioPlayRequest) return;
+        if (api != Api || Section != originSection || browse != stationRequest || request != radioPlayRequest) return;
         var entries = q.Items("Metadata").Select(Track.Read).ToList();
         if (entries.Count == 0)
             throw new IOException("Plex returned an empty station.");
@@ -857,7 +867,7 @@ sealed partial class Session : INotifyPropertyChanged
             Queue.Add(t);
         index = 0;
         queueId = q.Str("playQueueID");
-        SetStationName(option.Name);
+        SetStationName(option.Name,option.Kind=="sonic");
         Section = "Up Next";
         Show(Queue);
         await Start(Queue[0]);
@@ -901,10 +911,13 @@ sealed partial class Session : INotifyPropertyChanged
                 else
                 {
                     var lists = await library.Playlists();
-                    dest = lists[
-                        Dialogs.Choose("Playlists", lists.Select(p => p.Str("title")).ToArray())
-                    ]
-                        .Str("ratingKey");
+                    var playlistChoice = Dialogs.Choose("Add to playlist",lists.Select(p=>p.Str("title")).Append("New playlist…").ToArray());
+                    if (playlistChoice < lists.Count) dest = lists[playlistChoice].Str("ratingKey");
+                    else
+                    {
+                        name = Dialogs.Input("New playlist name");
+                        if (string.IsNullOrWhiteSpace(name)) throw new IOException("Enter a playlist name.");
+                    }
                 }
                 foreach (var t in tracks)
                 {
@@ -1041,6 +1054,22 @@ sealed partial class Session : INotifyPropertyChanged
                 queueId = "";
                 SetStationName("");
                 await Start(Queue[0]);
+                break;
+            case "Sonically similar radio":
+                var seed = Selection().Single();
+                await PlayRadio(new("sonic", "", seed.Title + " Radio"), [seed.Id]);
+                break;
+            case "Edit…":
+                var metadataApi = Api!;
+                var metadataScope = Scope;
+                var metadata = await TrackMetadata.Open(metadataApi,metadataScope,Selection().Select(t=>t.Id));
+                if (Api != metadataApi || Scope != metadataScope) break;
+                var changes = MetadataWindow.Edit(metadata, this);
+                if (changes != null)
+                {
+                    try { await metadata.Save(Store,changes); }
+                    finally { await Sync(); }
+                }
                 break;
             case "Song Info":
                 var sel = Selection();

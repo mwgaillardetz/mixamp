@@ -3,7 +3,7 @@ using Mixamp.Core;
 
 namespace Mixamp;
 
-internal static class MacTitleBar
+internal static partial class MacTitleBar
 {
     // Photino owns the NSWindow. AppKit exposes the title bar and its traffic lights
     // separately from the web view, so update them on the window's UI thread.
@@ -17,8 +17,9 @@ internal static class MacTitleBar
     [DllImport(ObjC, EntryPoint="objc_msgSend")] static extern void SetBool(nint obj, nint selector, byte arg);
     [DllImport(ObjC, EntryPoint="objc_msgSend")] static extern nint Color(nint obj, nint selector, double r, double g, double b, double a);
 
-    public static bool Apply(PlayerTheme theme)
+    public static bool Apply(PlayerTheme theme,bool glass,out bool active)
     {
+        active=false;
         var app = Get(objc_getClass("NSApplication"), sel_registerName("sharedApplication"));
         var windows = Get(app, sel_registerName("windows"));
         var count = Get(windows, sel_registerName("count"));
@@ -34,8 +35,10 @@ internal static class MacTitleBar
             var name = StringArg(objc_getClass("NSString"), sel_registerName("stringWithUTF8String:"), style);
             var appearance = ObjectArg(objc_getClass("NSAppearance"), sel_registerName("appearanceNamed:"), name);
             SetObject(window, sel_registerName("setAppearance:"), appearance);
+            active=ApplyMaterial(window,glass);
+            if(active) color=Get(objc_getClass("NSColor"),sel_registerName("clearColor"));
             SetObject(window, sel_registerName("setBackgroundColor:"), color);
-            SetBool(window, sel_registerName("setTitlebarAppearsTransparent:"), 1);
+            SetBool(window, sel_registerName("setTitlebarAppearsTransparent:"), active?(byte)0:(byte)1);
             return true;
         }
         return false;

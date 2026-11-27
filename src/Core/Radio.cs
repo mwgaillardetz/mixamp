@@ -57,12 +57,46 @@ public sealed partial class Library
         return result.Items("Directory").Select(n => new RadioChoice(n.Str("key"), n.Str("title"))).ToList();
     }
 
+    async Task<List<string>> SonicNeighbors(string id)
+    {
+        var seed = await api.Fresh(id);
+        if (seed.LibraryId != scope.Library) throw new IOException("Select a track in the connected library.");
+        JsonNode near;
+        try { near = await api.Call("/library/metadata/" + E(id) + "/nearest?limit=50"); }
+        catch (HttpRequestException ex) when (ex.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.BadRequest)
+        { throw new IOException("Sonic radio requires a Plex library with completed sonic analysis.",ex); }
+        return near.Items("Metadata").Where(n => n.Str("type") == "track" &&
+            (n.Str("librarySectionID") == "" || n.Str("librarySectionID") == scope.Library))
+            .Select(n => n.Str("ratingKey")).Where(k => k.Length > 0 && k != id).Distinct().ToList();
+    }
+
+    public async Task<JsonNode> ContinueSonic(string queueId,string last,string seed,IReadOnlyList<string> played)
+    {
+        var window=await ContinueQueue(queueId,last);
+        var entries=window.Items("Metadata").ToList();
+        int anchor=entries.FindIndex(t=>t.Str("playQueueItemID")==last);
+        if(anchor<0 || anchor+1<entries.Count)
+            return window;
+        var next=(await SonicNeighbors(seed)).Except(played).Take(25).Select(E).ToArray();
+        if(next.Length==0)return window;
+        var uri="library:///directory/"+E("/library/metadata/"+string.Join(",",next));
+        await api.Call("/playQueues/"+E(queueId)+"?uri="+E(uri),HttpMethod.Put);
+        return await ContinueQueue(queueId,last);
+    }
+
     public async Task<JsonNode> StartRadio(RadioOption option, IReadOnlyList<string> choices, Store store)
     {
         if (option.Kind == "station") return await StationQueue(option.Key);
         if (option.Kind == "folder") return await StationQueue(choices.Single());
         string path;
-        if (option.Kind is "artist" or "album")
+        if (option.Kind == "sonic")
+        {
+            var id = choices.Single();
+            var ids = await SonicNeighbors(id);
+            if (ids.Count == 0) throw new IOException("Plex found no sonically similar tracks. Check sonic analysis for this library.");
+            path = "/library/metadata/" + string.Join(",", ids.Prepend(id).Select(E));
+        }
+        else if (option.Kind is "artist" or "album")
         {
             var tracks = await Task.Run(() => store.MixTrackIds(scope, option.Kind, choices));
             if (tracks.Count == 0) throw new IOException("No tracks are available for this mix.");

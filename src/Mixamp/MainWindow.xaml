@@ -48,7 +48,7 @@
   </Style>
   <Style TargetType="DataGridColumnHeader"><Setter Property="Background" Value="{DynamicResource Side}"/><Setter Property="Foreground" Value="{DynamicResource Muted}"/><Setter Property="Padding" Value="7,5"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="BorderThickness" Value="0,0,1,1"/><Setter Property="BorderBrush" Value="{DynamicResource Line}"/></Style>
  </Window.Resources>
- <DockPanel Background="{DynamicResource Canvas}">
+ <DockPanel x:Name="Shell" Background="{DynamicResource Canvas}">
   <Menu DockPanel.Dock="Top" x:Name="Menus" Background="{DynamicResource Side}" Foreground="{DynamicResource Ink}" Padding="4,1">
    <Menu.Resources><Style TargetType="MenuItem" BasedOn="{StaticResource PlayerMenuItem}"/></Menu.Resources>
   </Menu>
@@ -68,7 +68,13 @@
      <Button Style="{StaticResource Key}" Command="{Binding Action}" CommandParameter="Next" AutomationProperties.Name="Next" ToolTip="Next"><Path Fill="{DynamicResource Ink}" Data="M0,0 L9,6 L0,12 Z M10,0 H12 V12 H10 Z"/></Button>
     </StackPanel>
     <Border x:Name="PlayerScreen" Grid.Column="1" Background="{DynamicResource Tint}" BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="4" Padding="12,3" Margin="18,0">
-     <Grid ClipToBounds="True"><local:Visualizer x:Name="NowBars" HorizontalAlignment="Right" Width="104" Height="24" Margin="0,0,56,4" VerticalAlignment="Bottom" BottomAligned="True" Opacity=".17" IsHitTestVisible="False" Focusable="False"/><DockPanel><Image Source="{Binding Artwork}" DockPanel.Dock="Left" MaxWidth="52" MaxHeight="52" Stretch="Uniform" Margin="0,0,6,0"/><TextBlock x:Name="TimeDisplay" DockPanel.Dock="Right" Text="{Binding Clock}" ToolTip="{Binding ClipClock}" Foreground="{DynamicResource Accent}" FontFamily="Consolas" VerticalAlignment="Center" FontSize="18"/><StackPanel x:Name="TrackDetails"><TextBlock x:Name="TrackDisplay" Text="{Binding Now}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/><TextBlock Text="{Binding Byline}" Foreground="{DynamicResource Muted}" FontSize="11" TextTrimming="CharacterEllipsis"/><Slider x:Name="SeekBar" IsEnabled="{Binding Seekable}" Height="16" AutomationProperties.Name="Original media position" Minimum="{Binding Minimum}" Maximum="{Binding Maximum}" Value="{Binding Position,Mode=OneWay}" PreviewMouseLeftButtonUp="SeekRelease" PreviewKeyUp="SeekKeys"/></StackPanel></DockPanel></Grid>
+     <Grid x:Name="PlayerContent" ClipToBounds="True">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition x:Name="SpectrumColumn" Width="*"/></Grid.ColumnDefinitions>
+      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+      <DockPanel><Image Source="{Binding Artwork}" DockPanel.Dock="Left" MaxWidth="52" MaxHeight="52" Stretch="Uniform" Margin="0,0,6,0"/><TextBlock x:Name="TimeDisplay" DockPanel.Dock="Right" Text="{Binding Clock}" ToolTip="{Binding ClipClock}" Foreground="{DynamicResource Accent}" FontFamily="Consolas" VerticalAlignment="Center" FontSize="18"/><StackPanel x:Name="TrackDetails"><TextBlock x:Name="TrackDisplay" Text="{Binding Now}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/><TextBlock Text="{Binding Byline}" Foreground="{DynamicResource Muted}" FontSize="11" TextTrimming="CharacterEllipsis"/></StackPanel></DockPanel>
+      <local:Visualizer x:Name="NowBars" Grid.Column="1" Height="26" Margin="8,0,0,0" VerticalAlignment="Center" BottomAligned="True" Opacity=".48" IsHitTestVisible="False" Focusable="False"/>
+      <Slider Grid.Row="1" Grid.ColumnSpan="2" x:Name="SeekBar" IsEnabled="{Binding Seekable}" Height="16" AutomationProperties.Name="Original media position" Minimum="{Binding Minimum}" Maximum="{Binding Maximum}" Value="{Binding Position,Mode=OneWay}" PreviewMouseLeftButtonUp="SeekRelease" PreviewKeyUp="SeekKeys"/>
+     </Grid>
     </Border>
     <StackPanel x:Name="VolumePanel" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
      <Path Data="M1,5 H4 L9,1 V15 L4,11 H1 Z M12,5 Q15,8 12,11 M15,2 Q21,8 15,14" Stroke="{DynamicResource Muted}" StrokeLineJoin="Round" StrokeThickness="1.4" VerticalAlignment="Center" Margin="0,0,6,0"/>

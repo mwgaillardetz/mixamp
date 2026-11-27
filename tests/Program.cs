@@ -365,6 +365,22 @@ try
             (await api.Fresh("1")).Title == "Edited fixture",
             "write title and reread through Plex adapter"
         );
+        var metadata=await TrackMetadata.Open(api,scope,["2","3"]);
+        Check(metadata.Count==2 && metadata.Fields.Single(f=>f.Key=="title").Value==null,"batch editor shows mixed titles");
+        await metadata.Save(store,new(){["genre"]="Post-rock\nVocal, jazz",["parentIndex"]="5"});
+        foreach(var step in store.LastChanges(scope,false))
+        {
+            var fresh=await api.Fresh(step.Change.Track.Id);
+            Check(fresh.Title==step.Change.Track.Title && fresh.Disc==5 && fresh.Genre.Contains("Vocal, jazz"),"batch writes selected metadata fields only");
+            await TrackMetadata.Restore(api,scope,step.Change);
+            store.CompleteChange(scope,step,false);
+            Check((await api.Fresh(fresh.Id)).Genre==step.Change.Track.Genre,"metadata undo restores the previous tag set");
+        }
+        var sonic=await library.StartRadio(new("sonic","","Similar radio"),["1"],store);
+        var neighbors=sonic.Items("Metadata").Select(Track.Read).ToArray();
+        Check(neighbors.Select(t=>t.Id).SequenceEqual(new[]{"1","2","3","4"}),"sonic radio starts with the seed and Plex nearest tracks");
+        var tail=await library.ContinueSonic(sonic.Str("playQueueID"),neighbors[^1].QueueItem,neighbors[^1].Id,neighbors.Select(t=>t.Id).ToArray());
+        Check(tail.Items("Metadata").Last().Str("ratingKey")=="7","sonic radio extends using the last track");
         var station = (await library.Stations(null)).Single();
         var offers = await library.RadioStations();
         var genre = offers.Single(o=>o.Name=="Genre Radio");

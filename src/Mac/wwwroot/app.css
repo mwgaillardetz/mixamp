@@ -1,4 +1,5 @@
 @font-face{font-family:"Mixamp Meter";src:url("MixampMeter.ttf") format("truetype");font-display:swap}
+footer{gap:12px}footer #progress{margin-left:auto}footer label{white-space:nowrap}footer select{border:1px solid var(--line);border-radius:3px;padding:2px 4px}
 @font-face{font-family:Ubuntu;src:url("fonts/Ubuntu-Regular.ttf") format("truetype");font-weight:400;font-display:swap}
 @font-face{font-family:Ubuntu;src:url("fonts/Ubuntu-Medium.ttf") format("truetype");font-weight:500 600;font-display:swap}
 @font-face{font-family:Ubuntu;src:url("fonts/Ubuntu-Bold.ttf") format("truetype");font-weight:700;font-display:swap}
@@ -22,8 +23,10 @@
 .volume input{appearance:none;background:transparent;width:82px;height:24px;margin:0;cursor:pointer}
 .volume input::-webkit-slider-runnable-track,.deck input::-webkit-slider-runnable-track{height:3px;border-radius:2px;background:linear-gradient(to right,var(--accent) var(--fill,0%),var(--muted) var(--fill,0%))}
 .volume input::-webkit-slider-thumb,.deck input::-webkit-slider-thumb{appearance:none;width:11px;height:11px;margin-top:-4px;border:1px solid var(--paper);border-radius:50%;background:var(--accent)}
-.deck{position:relative;flex:1;min-width:0;background:var(--tint);padding:5px 12px;border:1px solid var(--line);border-radius:4px;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:2px 12px}
-.record{display:flex;align-items:center;gap:9px;min-width:0;z-index:1}
+.deck{position:relative;flex:1;min-width:0;background:var(--tint);padding:5px 12px;border:1px solid var(--line);border-radius:4px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:center;gap:2px 8px}
+.deck:has(#bars[hidden]){grid-template-columns:minmax(0,1fr)}
+.recordLine{min-width:0;display:flex;align-items:center;gap:8px}
+.record{flex:1;display:flex;align-items:center;gap:9px;min-width:0;z-index:1}
 #cover{flex:none;width:40px;height:40px}
 #cover img{width:100%;height:100%;object-fit:contain}
 .trackInfo{min-width:0}
@@ -33,7 +36,7 @@
 .credits span:empty{display:none}
 #album{order:2}
 .deck time{grid-column:2;grid-row:1;color:var(--accent);font:16px monospace}
-.deck canvas{position:absolute;bottom:15px;right:56px;width:104px;height:18px;opacity:.28;pointer-events:none}
+.deck canvas{grid-column:2;grid-row:1;width:100%;height:26px;opacity:.48;pointer-events:none}
 .deck input{grid-column:1/-1;width:100%;height:14px;margin:0;appearance:none;background:transparent}
 input[type=range]{accent-color:var(--accent)}.body{flex:1;display:flex;min-height:0}aside{width:174px;min-width:132px;max-width:35vw;resize:horizontal;overflow:auto;background:var(--side);border-right:1px solid var(--line);padding:15px 8px}.brand{font-size:20px;font-weight:700;gap:7px;margin:0 4px 18px}.brand img{width:32px;height:32px}.nav,#lists button{display:block;text-align:left;background:transparent;width:100%;border:0;border-radius:0;padding:8px 10px}.nav.active,#lists .active{background:var(--tint);box-shadow:inset 3px 0 var(--accent);font-weight:600}summary{cursor:pointer;padding:12px 4px}#lists button{padding-left:18px}main{flex:1;min-width:0;display:flex;flex-direction:column}.toolbar{padding:15px 12px;gap:6px}.toolbar h1{font-size:22px;margin:0 auto 0 0}.toolbar input{width:150px;padding:5px 7px;border:1px solid var(--line);border-radius:4px}#grid{overflow:auto;flex:1;min-height:0;outline:none}.row,#head{display:grid;grid-template-columns:var(--cols);min-width:var(--width);height:26px;align-items:stretch}#head{position:sticky;top:0;z-index:2;background:var(--side);height:28px}#head button{font-weight:600;font-size:11px;text-align:left;border:0;border-right:1px solid var(--line);border-radius:0;background:transparent}#spacer{position:relative;min-width:var(--width)}#rows{position:absolute;top:0;left:0;width:100%}.row{cursor:default;user-select:none}.row:nth-child(even){background:var(--stripe)}.row.selected{background:var(--tint)}.row span{padding:5px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}footer{justify-content:space-between;border-top:1px solid var(--line);padding:6px 12px;color:var(--muted);font-size:12px}#menu{position:fixed;z-index:5;padding:4px;background:var(--paper);border:1px solid var(--line);box-shadow:0 5px 18px #0002;max-height:75vh;overflow:auto}#menu button{display:block;text-align:left;border:0;width:100%;padding:6px 14px}dialog{border:1px solid var(--line);border-radius:6px;width:min(620px,90vw);padding:20px}dialog::backdrop{background:#10232a55}dialog h2{font-size:18px;margin:0 0 14px}#reviewBody{max-height:55vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}#reviewBody input,#reviewBody select{width:100%;padding:6px}.actions{justify-content:flex-end;gap:8px;margin-top:18px}
 #radioPane{overflow:auto;flex:1;padding:0 14px 16px}
@@ -65,11 +68,11 @@ input,select,textarea,dialog{color:var(--ink);background-color:var(--paper)}
 [data-theme="Bitstream 98"] header>#seek{grid-row:2;grid-column:2;width:100%}
 [data-theme="Bitstream 98"] .transport button,[data-theme="Bitstream 98"] #play{width:35px;height:25px;padding:1px;background:#9697a5;color:#20212d;border:2px outset #b9b9cb;border-radius:0;font-weight:900}
 [data-theme="Bitstream 98"] .transport button:active{border-style:inset}
-[data-theme="Bitstream 98"] .deck{grid-column:1/-1;grid-row:1;background:#080909;border:2px inset #616273;border-radius:0;grid-template-columns:auto minmax(0,1fr);column-gap:12px}
+[data-theme="Bitstream 98"] .deck{grid-column:1/-1;grid-row:1;background:#080909;border:2px inset #616273;border-radius:0;column-gap:8px}
 [data-theme="Bitstream 98"] .record{grid-column:2;grid-row:1;font-family:Menlo,Consolas,monospace}
 [data-theme="Bitstream 98"] .deck strong{color:var(--accent)}
 [data-theme="Bitstream 98"] .deck time{grid-column:1;grid-row:1;font:32px "Mixamp Meter",monospace}
-[data-theme="Bitstream 98"] .deck canvas{right:8px;bottom:3px}
+[data-theme="Bitstream 98"] .recordLine time{order:-1}
 [data-theme="Bitstream 98"] header input[type=range]{appearance:none;background:#101018;height:6px;border:1px inset #444353;margin:5px 0}
 [data-theme="Bitstream 98"] header input[type=range]::-webkit-slider-thumb{appearance:none;width:13px;height:12px;border:2px outset #ffe8a5;background:#cb9a41}
 [data-theme="Bitstream 98"] .volume input::-webkit-slider-runnable-track{height:4px;background:transparent}
@@ -84,3 +87,14 @@ input,select,textarea,dialog{color:var(--ink);background-color:var(--paper)}
 ::-webkit-scrollbar-thumb{background:var(--muted);border:2px solid var(--side);border-radius:5px}
 ::-webkit-scrollbar-thumb:hover,::-webkit-scrollbar-thumb:active{background:var(--accent)}
 @supports not selector(::-webkit-scrollbar){*{scrollbar-color:var(--muted) var(--side);scrollbar-width:thin}}
+
+#reviewBody .metadataField{margin:8px 0}
+.metadataField label{display:flex;align-items:center;gap:6px;margin-bottom:3px}
+#reviewBody .metadataField input[type=checkbox]{width:auto}
+.metadataField textarea{width:100%;font:inherit}
+.toolbar button[hidden]{display:none}
+
+:root.glass{background:transparent}
+.glass body{background:color-mix(in srgb,var(--canvas) 35%,transparent)}
+.glass aside,.glass footer{background:color-mix(in srgb,var(--side) 55%,transparent)}
+.glass header{background:linear-gradient(color-mix(in srgb,var(--deckTop) 70%,transparent),color-mix(in srgb,var(--deckBottom) 50%,transparent));box-shadow:inset 0 1px #ffffff38}

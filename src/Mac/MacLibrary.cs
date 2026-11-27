@@ -9,6 +9,8 @@ sealed record Request(string Action, string Id = "", string Value = "", string E
 
 sealed class MacLibrary : IDisposable
 {
+    TrackMetadata? editor;
+    string editorId = "";
     readonly Store store;
     readonly Account account;
     readonly SemaphoreSlim gate = new(1);
@@ -60,7 +62,7 @@ sealed class MacLibrary : IDisposable
         _ = sections.Single(s => s.Str("key") == id);
         api?.Dispose(); api = candidate; candidate = null;
         owner = candidateOwner; scope = new(user,machine,id);
-        pending = null; mediaKey = null; remote = null; cover = null;
+        editor = null; pending = null; mediaKey = null; remote = null; cover = null;
         radioStations.Clear(); radioChoices.Clear(); selectedRadio = null;
         store.Set("installation","lastScope",JsonSerializer.Serialize(scope));
     }
@@ -106,6 +108,19 @@ sealed class MacLibrary : IDisposable
                     selectedRadio = radioStations[int.Parse(r.Id)];
                     radioChoices = await Library.RadioChoices(selectedRadio,store);
                     return radioChoices;
+                case "metadata":
+                    editor = await TrackMetadata.Open(api ?? throw new IOException("Connect to Plex first."),scope,r.Ids ?? []);
+                    editorId = Guid.NewGuid().ToString();
+                    return new { id=editorId, fields=editor.Fields,
+                        fileTags=store.Get(scope.Key,"mount")!=null && editor.Tracks.All(t=>t.Parts.Length==1 && TagEditor.Supported(t.FilePath)) };
+                case "saveMetadata":
+                    if (editor == null || editorId != r.Id) throw new IOException("Reopen the metadata editor.");
+                    var patch = JsonSerializer.Deserialize<Dictionary<string,string>>(r.Value) ?? throw new IOException("Missing metadata.");
+                    try { await editor.Save(store,patch); } finally { await Sync(); }
+                    return true;
+                case "sonic":
+                    var similar = await Library.StartRadio(new("sonic","","Sonic radio"),[r.Id],store);
+                    return new { id=similar.Str("playQueueID"), tracks=similar.Items("Metadata").Select(Track.Read).ToList() };
                 case "startRadio":
                     var station = radioStations[int.Parse(r.Id)];
                     var choices = r.Ids ?? [];
@@ -113,11 +128,13 @@ sealed class MacLibrary : IDisposable
                         throw new IOException("Reopen this station and choose again.");
                     var radio = await Library.StartRadio(station,choices,store);
                     return new { id=radio.Str("playQueueID"), tracks=radio.Items("Metadata").Select(Track.Read).ToList() };
+                case "continueSonic":
+                    return (await Library.ContinueSonic(r.Id,r.Value,r.Extra,r.Ids??[])).Items("Metadata").Select(Track.Read).ToList();
                 case "continueRadio":
                     return (await Library.ContinueQueue(r.Id,r.Value)).Items("Metadata").Select(Track.Read).ToList();
                 case "playlists": return (await Library.Playlists()).Select(p => new { id=p.Str("ratingKey"), name=p.Str("title") });
                 case "playlist": return (await Library.PlaylistItems(r.Id)).Items("Metadata").Select(Track.Read);
-                case "newList": await Library.CreatePlaylist(Required(r.Value)); return true;
+                case "newList": return (await Library.CreatePlaylist(Required(r.Value))).Items("Metadata").Single().Str("ratingKey");
                 case "removeList": await Library.DeletePlaylist(r.Id); return true;
                 case "addList":
                     foreach (var id in r.Ids ?? []) await Library.AddToPlaylist(r.Id,"",await Fresh(id));
@@ -141,28 +158,26 @@ sealed class MacLibrary : IDisposable
                 case "readCue": return store.ReadCue(scope,await Fresh(r.Id));
                 case "editFile":
                     var edited=await Fresh(r.Id);
-                    if(edited.Parts.Length!=1 || r.Value is not ("TITLE" or "ARTIST" or "ALBUM" or "ALBUMARTIST" or "GENRE"))
-                        throw new IOException("Choose one mapped track and a supported tag.");
-                    string filePath=Local(edited.FilePath);
-                    if(!TagEditor.Supported(filePath)) throw new IOException("Choose an MP3, FLAC, or M4A file.");
-                    var fileInfo=new FileInfo(filePath);
-                    if(fileInfo.Length!=edited.Parts[0].Size)throw new IOException("The mapped file has changed.");
-                    var staged=Path.Combine(fileInfo.DirectoryName!,".mixamp-"+Guid.NewGuid().ToString("N")+fileInfo.Extension);
-                    var changes=new Dictionary<string,string>{{r.Value,r.Extra}};
-                    var identity=Replacement.Digest(filePath);
+                    await WriteFileTags(edited,new(){{r.Value,r.Extra}},Guid.NewGuid().ToString());
+                    await Sync();return true;
+                case "saveFileMetadata":
+                    if(editor==null || editorId!=r.Id)throw new IOException("Reopen the editor.");
+                    var tags=JsonSerializer.Deserialize<Dictionary<string,string>>(r.Value) ?? throw new IOException("Missing file tags.");
+                    if(tags.Count==0)return true;
+                    var tagBatch=Guid.NewGuid().ToString();
+                    int written=0;
                     try
                     {
-                        await using(var original=File.Create(staged)) await api!.CopyOriginal(edited.Parts[0].Key,original,default);
-                        if(Replacement.Digest(staged)!=identity)throw new IOException("Mapped file differs from the server original.");
-                        TagEditor.EditCopy(staged,changes);
-                        if(Local(edited.FilePath)!=filePath)throw new IOException("The share mapping changed.");
-                        new Replacement(store,scope,edited.Id).Commit(filePath,identity,staged,JsonSerializer.Serialize(changes),
-                            recordBackup:(backup,after)=>store.Remember(scope,Guid.NewGuid().ToString(),"Edit file tags",
-                                new(edited,"Tags",edited.FilePath,backup,identity,after,filePath)));
+                        foreach(var original in editor.Tracks)
+                        {
+                            var fresh=await Fresh(original.Id);
+                            if(fresh.Identity!=original.Identity)throw new IOException("Recording changed. Reopen Edit.");
+                            await WriteFileTags(fresh,tags,tagBatch);written++;
+                        }
                     }
-                    finally {if(File.Exists(staged))File.Delete(staged);}
-                    await api!.Call("/library/metadata/"+Plex.E(edited.Id)+"/refresh",HttpMethod.Put);
-                    await Sync();return true;
+                    catch(Exception ex){throw new IOException($"{written} files updated. {ex.Message}",ex);}
+                    finally {await Sync();}
+                    return true;
                 case "title":
                     var song=await Fresh(r.Id); var title=Required(r.Value);
                     store.Remember(scope,Guid.NewGuid().ToString(),"Rename track",new(song,"Title","","",song.Title,title));
@@ -199,9 +214,9 @@ sealed class MacLibrary : IDisposable
                 case "eq": return ToneProfile.Choose(r.Value,r.Extra);
                 case "config": return new { eq=store.Get("installation","eq") ?? "Auto", columns=store.Get("installation","columns"),bars=store.Get("installation","bars") != "off",
                     themes=ThemeCatalog.All, theme=ThemeCatalog.Resolve(store.Get("installation","theme")).Name,
-                    ubuntuFont=store.Get("installation","font") == "ubuntu" };
+                    glass=store.Get("installation","glass")=="on", ubuntuFont=store.Get("installation","font") == "ubuntu" };
                 case "setting":
-                    if (r.Id is not ("eq" or "columns" or "bars" or "theme" or "font")) throw new ArgumentException();
+                    if (r.Id is not ("eq" or "columns" or "bars" or "theme" or "font" or "glass")) throw new ArgumentException();
                     if (r.Id=="font" && r.Value is not ("ubuntu" or "theme")) throw new ArgumentException("Unknown font.");
                     if (r.Id=="theme" && ThemeCatalog.All.All(t=>t.Name!=r.Value)) throw new ArgumentException("Unknown theme.");
                     store.Set("installation",r.Id,r.Value); return true;
@@ -216,6 +231,29 @@ sealed class MacLibrary : IDisposable
             }
         }
         finally { gate.Release(); }
+    }
+    async Task WriteFileTags(Track edited,Dictionary<string,string> changes,string batch)
+    {
+        if(edited.Parts.Length!=1 || changes.Keys.Any(k=>k is not ("TITLE" or "ARTIST" or "ALBUM" or "ALBUMARTIST" or "GENRE" or "DATE" or "DISCNUMBER" or "TRACKNUMBER")))
+            throw new IOException("Choose mapped single-part tracks and supported tags.");
+        string filePath=Local(edited.FilePath);
+        if(!TagEditor.Supported(filePath)) throw new IOException("Choose an MP3, FLAC, or M4A file.");
+        var fileInfo=new FileInfo(filePath);
+        if(fileInfo.Length!=edited.Parts[0].Size)throw new IOException("The mapped file has changed.");
+        var staged=Path.Combine(fileInfo.DirectoryName!,".mixamp-"+Guid.NewGuid().ToString("N")+fileInfo.Extension);
+        var identity=Replacement.Digest(filePath);
+        try
+        {
+            await using(var original=File.Create(staged)) await api!.CopyOriginal(edited.Parts[0].Key,original,default);
+            if(Replacement.Digest(staged)!=identity)throw new IOException("Mapped file differs from the server original.");
+            TagEditor.EditCopy(staged,changes);
+            if(Local(edited.FilePath)!=filePath)throw new IOException("The share mapping changed.");
+            new Replacement(store,scope,edited.Id).Commit(filePath,identity,staged,JsonSerializer.Serialize(changes),
+                recordBackup:(backup,after)=>store.Remember(scope,batch,"Edit file tags",
+                    new(edited,"Tags",edited.FilePath,backup,identity,after,filePath)));
+        }
+        finally {if(File.Exists(staged))File.Delete(staged);}
+        await api!.Call("/library/metadata/"+Plex.E(edited.Id)+"/refresh",HttpMethod.Put);
     }
     static string Required(string s) => !string.IsNullOrWhiteSpace(s) ? s.Trim() : throw new IOException("Enter a value.");
     object Prepared(Track track,string audioName)
@@ -394,6 +432,7 @@ sealed class MacLibrary : IDisposable
                         File.Replace(c.To,original,opposite);
                     }
                 }
+                else if(c.Type=="Metadata") await TrackMetadata.Restore(api!,scope,c);
                 else if(c.Type=="Title")
                 {
                     var t=await Fresh(c.Track.Id);

@@ -312,6 +312,11 @@ public partial class MainWindow
             Songs.Focus();
             await vm.Run("Add to Queue");
             var selected = Songs.SelectedItem;
+            glassOption.IsChecked=true;
+            glassOption.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            if(vm.Store.Get("installation","glass")!="on")throw new IOException("Glass appearance preference was not saved.");
+            glassOption.IsChecked=false;
+            glassOption.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
             foreach (MenuItem option in themeMenu.Items)
             {
                 var name = (string)option.Header;
@@ -326,6 +331,10 @@ public partial class MainWindow
                 );
                 if (!ReferenceEquals(selected, Songs.SelectedItem))
                     throw new IOException("Theme lost the selected track.");
+                if(Math.Abs(SpectrumColumn.ActualWidth-PlayerContent.ActualWidth/2)>1 ||
+                    TrackDisplay.TranslatePoint(new Point(TrackDisplay.ActualWidth,0),PlayerContent).X >
+                    NowBars.TranslatePoint(new Point(),PlayerContent).X+1)
+                    throw new IOException("Now Playing text overlaps the spectrum.");
                 await CheckMenuTheme(libraryMenu);
                 var visual = (FrameworkElement)Content;
                 var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap(

@@ -8,6 +8,10 @@ Unzip the download and open `Mixamp.exe` on Windows 11 or `Mixamp.app` on macOS 
 
 ## Using it
 
+- Right-click a track to start **Sonically similar radio** using Plex sonic analysis. Right-click one or more tracks to **Edit…** metadata or **Add to playlist**. In the editor, check the fields you want to change across the selection.
+- Turn on **View → Glass appearance** for a translucent player and sidebar. The Now Playing spectrum uses the right half of the display.
+- On Mac, **Library**, **Edit**, **View**, and **EQ** are in the macOS menu bar. Double-click a track to play it.
+
 - Right-click a column header to show genre, album artist, file path, or the other fields you care about. Click a header to sort.
 - Open **Radio** for Plex stations or build a mix around a few artists or albums. **All stations** takes you back while the queue keeps playing.
 - Press **Space** to play or pause. Use the arrow keys to browse and **Enter** to play a track.

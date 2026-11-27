@@ -154,6 +154,7 @@ public partial class MainWindow : Window
         Menus.Items.Add(appearance);
         appearance.Items.Add(themeMenu);
         appearance.Items.Add(ubuntuFont);
+        ConfigureGlass(appearance);
         ubuntuFont.IsChecked = vm.Store.Get("installation", "font") == "ubuntu";
         ubuntuFont.Click += (_, _) =>
         {
@@ -182,10 +183,15 @@ public partial class MainWindow : Window
         var bars = new MenuItem { Header = "Now Playing bars", IsCheckable = true,
             IsChecked = vm.Store.Get("installation", "nowBars") != "off" };
         ((MenuItem)Menus.Items[0]).Items.Add(bars);
-        NowBars.Visibility = bars.IsChecked ? Visibility.Visible : Visibility.Collapsed;
-        bars.Click += (_, _) =>
+        void DisplayBars()
         {
             NowBars.Visibility = bars.IsChecked ? Visibility.Visible : Visibility.Collapsed;
+            SpectrumColumn.Width = bars.IsChecked ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+        }
+        DisplayBars();
+        bars.Click += (_, _) =>
+        {
+            DisplayBars();
             vm.Store.Set("installation", "nowBars", bars.IsChecked ? "on" : "off");
         };
         var strip = new MenuItem { Header = "Toggle player strip" };
@@ -257,11 +263,18 @@ public partial class MainWindow : Window
             if (e.PropertyName == nameof(vm.Playlists))
                 DisplayPlaylists();
         };
+        Songs.PreviewMouseRightButtonDown += (_, e) =>
+        {
+            if (ItemsControl.ContainerFromElement(Songs,e.OriginalSource as DependencyObject) is DataGridRow row && !row.IsSelected)
+                Songs.SelectedItem = row.Item;
+        };
         Songs.ContextMenu = new ContextMenu();
         foreach (
             var n in new[]
             {
                 "Play",
+                "Sonically similar radio",
+                "Edit…",
                 "Add to playlist",
                 "Play Next",
                 "Add to Queue",
@@ -388,7 +401,8 @@ public partial class MainWindow : Window
         var side = ((SolidColorBrush)FindResource("Side")).Color;
         var ink = ((SolidColorBrush)FindResource("Ink")).Color;
         int dark = !SystemParameters.HighContrast && side.R + side.G + side.B < 384 ? 1 : 0;
-        int caption = SystemParameters.HighContrast ? -1 : ColorRef(side);
+        bool glass=ApplyGlass(handle);
+        int caption = glass || SystemParameters.HighContrast ? -1 : ColorRef(side);
         int title = SystemParameters.HighContrast ? -1 : ColorRef(ink);
         DwmSetWindowAttribute(handle, 20, ref dark, sizeof(int));    // DWMWA_USE_IMMERSIVE_DARK_MODE
         DwmSetWindowAttribute(handle, 35, ref caption, sizeof(int)); // DWMWA_CAPTION_COLOR
@@ -435,9 +449,10 @@ public partial class MainWindow : Window
         Grid.SetRow(TransportKeys, amp ? 1 : 0);
         Grid.SetRow(VolumePanel, amp ? 1 : 0);
         PlayerScreen.Margin = amp ? new Thickness(0,0,0,4) : new Thickness(18,0,18,0);
-        if (amp && SeekBar.Parent == TrackDetails)
+        if (amp && SeekBar.Parent == PlayerContent)
         {
-            TrackDetails.Children.Remove(SeekBar);
+            PlayerContent.Children.Remove(SeekBar);
+            Grid.SetColumnSpan(SeekBar,1);
             DeckLayout.Children.Add(SeekBar);
             Grid.SetRow(SeekBar, 1);
             Grid.SetColumn(SeekBar, 1);
@@ -446,7 +461,9 @@ public partial class MainWindow : Window
         else if (!amp && SeekBar.Parent == DeckLayout)
         {
             DeckLayout.Children.Remove(SeekBar);
-            TrackDetails.Children.Add(SeekBar);
+            PlayerContent.Children.Add(SeekBar);
+            Grid.SetColumn(SeekBar,0);
+            Grid.SetColumnSpan(SeekBar,2);
             SeekBar.Margin = new Thickness(0);
         }
         PlayerScreen.CornerRadius = new CornerRadius(amp ? 0 : 4);
@@ -455,7 +472,6 @@ public partial class MainWindow : Window
         PlayerScreen.SetResourceReference(Border.BorderBrushProperty, amp ? "Canvas" : "Line");
         PlayerDeck.Padding = amp ? new Thickness(8,4,8,6) : new Thickness(12,9,12,9);
         TrackDisplay.SetResourceReference(TextBlock.ForegroundProperty, amp ? "Accent" : "Ink");
-        NowBars.Margin = amp ? new Thickness(0,0,4,0) : new Thickness(0,0,56,4);
         TimeDisplay.FontSize = amp ? 32 : 18;
         DockPanel.SetDock(TimeDisplay, amp ? Dock.Left : Dock.Right);
         TimeDisplay.Margin = amp ? new Thickness(0,0,12,0) : new Thickness(0);

@@ -23,7 +23,7 @@ sealed class Editor : Window
     readonly HashSet<string> completed = [];
     bool saving;
 
-    public Editor(Session vm, Track[] tracks)
+    public Editor(Session vm, Track[] tracks,bool fileTags=false)
     {
         System.Windows.Automation.AutomationProperties.SetName(from, "Start time");
         System.Windows.Automation.AutomationProperties.SetName(until, "Stop time");
@@ -199,6 +199,7 @@ sealed class Editor : Window
                 save.IsEnabled =
                     tabs.SelectedIndex == 0 || tabs.SelectedIndex == 1 && tracks.Length == 1;
         };
+        if(fileTags && vm.Store.Get(vm.Scope.Key,"mappings")!=null) target.SelectedIndex=1;
         Capabilities();
         save.Click += async (s, e) => await Save();
         Closing += (s, e) => e.Cancel = saving;

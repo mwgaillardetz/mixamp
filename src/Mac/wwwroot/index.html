@@ -7,10 +7,11 @@
   <button id="next" aria-label="Next track" title="Next track"></button>
  </div>
  <div class="deck">
-  <div class="record"><div id="cover" hidden></div>
+  <div class="recordLine"><div class="record"><div id="cover" hidden></div>
    <div class="trackInfo"><strong id="now">Ready to play</strong><div class="credits"><span id="by"></span><span id="album"></span></div></div>
   </div>
-  <canvas id="bars" width="208" height="36"></canvas><time id="clock">0:00</time>
+  <time id="clock">0:00</time></div>
+  <canvas id="bars" width="208" height="36"></canvas>
   <input id="seek" type="range" min="0" value="0" aria-label="Playback position">
  </div>
  <label class="volume">
@@ -21,5 +22,5 @@
 <div class="body"><aside><div class="brand"><img src="mixtape.png" alt="">Mixamp</div><button id="songs" class="nav active">♫　Songs</button><button id="radio" class="nav">◉　Radio</button><button id="queue" class="nav">☰　Up Next</button><button id="addLibrary" class="nav">＋　Add Plex Library</button><details id="folders"><summary>Playlists</summary><div id="lists"></div></details></aside>
 <main><div class="toolbar"><button id="queueBack" hidden>‹ All stations</button><h1 id="heading">Songs</h1><input id="search" type="search" placeholder="Search tracks" aria-label="Search tracks"><button id="library">Library ▾</button><button id="edit">Edit ▾</button><button id="view" aria-haspopup="true" disabled>View ▾</button><button id="eq">EQ ▾</button></div>
 <section id="radioPane" hidden aria-label="Radio stations"></section><div id="grid" tabindex="0" aria-label="Tracks"><div id="head"></div><div id="spacer"><div id="rows"></div></div></div></main></div>
-<footer><span id="status">Ready</span><span id="progress"></span></footer><div id="menu" hidden></div>
+<footer><span id="status">Ready</span><span id="progress"></span><label>Theme <select id="themePicker" disabled></select></label></footer><div id="menu" hidden></div>
 <dialog id="review"><h2></h2><div id="reviewBody"></div><div class="actions"><button id="cancel">Cancel</button><button id="confirm">Continue</button></div></dialog><audio id="audio" preload="metadata"></audio></body></html>
