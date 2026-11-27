@@ -39,7 +39,9 @@ def build(rid):
             plistlib.dump(dict(CFBundleName="Mixamp",CFBundleDisplayName="Mixamp",CFBundlePackageType="APPL",
                 CFBundleIdentifier="app.mixamp.player",CFBundleExecutable="Mixamp",CFBundleIconFile="Mixamp",
                 CFBundleVersion=version,CFBundleShortVersionString=version,NSHighResolutionCapable=True,
-                NSPrincipalClass="NSApplication",LSMinimumSystemVersion="14.0"), f)
+                NSPrincipalClass="NSApplication",LSMinimumSystemVersion="14.0",
+                NSAppTransportSecurity={"NSExceptionDomains":{"127.0.0.1":{"NSExceptionAllowsInsecureHTTPLoads":True}}},
+                NSLocalNetworkUsageDescription="Mixamp connects to your Plex Media Server to load and play your music."), f)
         shutil.copytree(root/"notices", resources/"notices")
         shutil.copy2(root/"THIRD-PARTY-NOTICES.md",resources)
         (payload/"Mixamp").unlink()
@@ -58,7 +60,8 @@ def build(rid):
                 subprocess.run([signer,"sign",str(p)],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
             subprocess.run([signer,"sign",str(app)],check=True)
         else: raise RuntimeError("Set RCODESIGN for cross-platform ad-hoc signing.")
-        target = out/("Mixamp-"+rid+".zip")
+        chip = "silicon" if rid == "osx-arm64" else "intel"
+        target = out / f"Mixamp-mac-{chip}.zip"
         with zipfile.ZipFile(target.with_suffix(".tmp"),"w",zipfile.ZIP_DEFLATED,compresslevel=5) as archive:
             for path in app.rglob("*"):
                 if not path.is_file(): continue

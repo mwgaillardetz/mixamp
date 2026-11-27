@@ -17,7 +17,8 @@ internal static class Program
     public static void Main(string[] args)
     {
         bool fixture = args is ["--fixture-host", _];
-        string profile = fixture ? args[1] : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        bool checkWindow = args is ["--check-window", _];
+        string profile = fixture || checkWindow ? args[1] : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             "Library","Application Support","Mixamp");
         using var library = new MacLibrary(profile);
         string root = Path.Combine(AppContext.BaseDirectory,"wwwroot");
@@ -48,8 +49,13 @@ internal static class Program
         web.MapGet("/audio/{name}",(string name)=>library.Audio(name));
         web.MapPost("/command",async (Request r)=>
         {
-            try{return Results.Json(await library.Command(r));}
-            catch(Exception ex){return Results.BadRequest(new {error=ex is IOException or ArgumentException ? ex.Message :
+            try
+            {
+                var result = await library.Command(r);
+                if (checkWindow && r.Action == "resume") Console.WriteLine("Library window initialized");
+                return Results.Json(result);
+            }
+            catch(Exception ex){return Results.BadRequest(new {error=ex is IOException or ArgumentException or TimeoutException ? ex.Message :
                 ex is HttpRequestException h ? $"Plex connection failed ({h.StatusCode})." : "Operation failed. Check the library and try again."});}
         });
         web.StartAsync().GetAwaiter().GetResult();

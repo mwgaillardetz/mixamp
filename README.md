@@ -4,7 +4,7 @@ I wanted my 50K+ track Plex library in one list, like old iTunes. Mixamp loads t
 
 [Download Mixamp for Windows or Mac](https://github.com/mwgaillardetz/mixamp/releases/latest)
 
-Unzip the download and open `Mixamp.exe` on Windows 11 or `Mixamp.app` on macOS 14 or newer. On Mac, pick the download for your chip (Apple Silicon or Intel). Choose **Library → Connect** and sign in to Plex.
+Unzip the download and open `Mixamp.exe` on Windows 11 or `Mixamp.app` on macOS 14 or newer. On Mac, pick `mac-silicon` for an M-series Mac or `mac-intel` for an Intel Mac. Click **Add Plex Library** in the sidebar (Windows: **Library → Connect**), sign in through your browser, then choose your server and music library.
 
 ## Using it
 

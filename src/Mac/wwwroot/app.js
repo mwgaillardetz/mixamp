@@ -331,8 +331,31 @@ $("edit").onclick=run(async e=>{
   popup([...actions,...edits().slice(2)],anchor.left,anchor.bottom+2);
 });
 tool("eq",()=>[...["Auto","Flat","Warm","Clarity","Punch"].map(m=>[(m===eqMode?"✓ ":"")+m,async()=>{eqMode=m;await call("setting",{id:"eq",value:m});await setTone();}]),["Custom…",customEq]]);
-tool("library",()=>[["Connect to Plex",async()=>{const ss=await call("connect");const id=await ask("Plex server",{choices:ss});const libs=await call("server",{id});
-  await call("library",{id:await ask("Music library",{choices:libs})});await reload();}],["Sync",async()=>{await call("sync");await reload();}],
+let connecting=false;
+async function addPlexLibrary(){
+  if(connecting)return;
+  connecting=true;$("addLibrary").disabled=true;
+  try{
+    $("status").textContent="Connecting to Plex… Complete sign-in in your browser if prompted.";
+    const servers=await call("connect");
+    if(!servers.length)throw Error("This Plex account has no available servers.");
+    $("status").textContent="Choose your Plex server.";
+    const id=await ask("Choose your Plex server",{choices:servers});
+    $("status").textContent="Finding music libraries…";
+    const libraries=await call("server",{id});
+    if(!libraries.length)throw Error("This server has no music libraries available to your account.");
+    const library=await ask("Choose your music library",{choices:libraries});
+    $("status").textContent="Loading your music library…";
+    await call("library",{id:library});await reload();
+  }catch(error){
+    if(error.message!=="Canceled")throw error;
+    $("status").textContent="Library selection canceled.";
+  }finally{
+    connecting=false;$("addLibrary").disabled=false;
+  }
+}
+$("addLibrary").onclick=run(addPlexLibrary);
+tool("library",()=>[["Add Plex Library",addPlexLibrary],["Sync",async()=>{await call("sync");await reload();}],
   ["Share mapping",async()=>{const value=await ask("Server music root",{value:"/music"});const extra=await ask("Mounted music folder",{value:"/Volumes/"});await call("mapping",{value,extra});}],
   ["New playlist",newList],[(showBars?"✓ ":"")+"Now Playing bars",async()=>{showBars=!showBars;$("bars").hidden=!showBars;await call("setting",{id:"bars",value:showBars?"on":"off"});cancelAnimationFrame(frame);if(showBars&&!audio.paused)frame=requestAnimationFrame(bars);}],
   ["Demo",async()=>{await call("demo");await reload();}]]);

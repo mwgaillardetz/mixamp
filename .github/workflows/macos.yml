@@ -16,11 +16,11 @@ jobs:
         shell: bash
         run: |
           case "$(uname -m)" in
-            arm64) rid=osx-arm64 ;;
-            x86_64) rid=osx-x64 ;;
+            arm64) chip=silicon ;;
+            x86_64) chip=intel ;;
             *) exit 1 ;;
           esac
-          ditto -x -k "artifacts/Mixamp-$rid.zip" "$RUNNER_TEMP"
+          ditto -x -k "artifacts/Mixamp-mac-$chip.zip" "$RUNNER_TEMP"
           app="$RUNNER_TEMP/Mixamp.app"
           codesign --verify --deep --strict "$app"
           "$app/Contents/MacOS/Mixamp" --fixture-host "$RUNNER_TEMP/profile" > "$RUNNER_TEMP/service.log" &
@@ -38,7 +38,22 @@ jobs:
           curl -fsS -b "$RUNNER_TEMP/cookies" -H "Origin: $origin" -H 'X-Mixamp: app' \
             -H 'Content-Type: application/json' -d '{"action":"config"}' "$origin/command" |
             python3 -c 'import json, sys; assert json.load(sys.stdin)["eq"] == "Auto"'
+      - name: Check the actual app window on first launch
+        shell: bash
+        run: |
+          app="$RUNNER_TEMP/Mixamp.app"
+          log="$RUNNER_TEMP/window.log"
+          "$app/Contents/MacOS/Mixamp" --check-window "$RUNNER_TEMP/first-launch" > "$log" 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          for i in {1..60}; do
+            if ! kill -0 "$pid" 2>/dev/null; then cat "$log"; exit 1; fi
+            if grep -q 'Library window initialized' "$log"; then exit 0; fi
+            sleep 1
+          done
+          cat "$log"
+          exit 1
       - uses: actions/upload-artifact@v4
         with:
           name: Mixamp-macOS
-          path: artifacts/Mixamp-osx-*.zip
+          path: artifacts/Mixamp-mac-*.zip
