@@ -3,7 +3,7 @@
   <BooleanToVisibilityConverter x:Key="VisibleWhenTrue"/>
   <Style x:Key="Key" TargetType="Button">
    <Setter Property="Background" Value="{DynamicResource Paper}"/><Setter Property="Foreground" Value="{DynamicResource Ink}"/><Setter Property="BorderBrush" Value="{DynamicResource Line}"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Padding" Value="12,6"/><Setter Property="Margin" Value="2"/><Setter Property="Template"><Setter.Value>
-   <ControlTemplate TargetType="Button"><Border x:Name="rim" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="3" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="rim" Property="Background" Value="{DynamicResource Tint}"/></Trigger><Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="rim" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger><Trigger Property="IsPressed" Value="True"><Setter TargetName="rim" Property="Opacity" Value=".7"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+   <ControlTemplate TargetType="Button"><Border x:Name="rim" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="14" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border><ControlTemplate.Triggers><Trigger Property="IsMouseOver" Value="True"><Setter TargetName="rim" Property="Background" Value="{DynamicResource Tint}"/></Trigger><Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="rim" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger><Trigger Property="IsPressed" Value="True"><Setter TargetName="rim" Property="Opacity" Value=".7"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
   </Style>
   <Style x:Key="Navigation" TargetType="Button">
    <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
@@ -67,12 +67,12 @@
       </Style></Path.Style></Path></Button>
      <Button Style="{StaticResource Key}" Command="{Binding Action}" CommandParameter="Next" AutomationProperties.Name="Next" ToolTip="Next"><Path Fill="{DynamicResource Ink}" Data="M0,0 L9,6 L0,12 Z M10,0 H12 V12 H10 Z"/></Button>
     </StackPanel>
-    <Border x:Name="PlayerScreen" Grid.Column="1" Background="{DynamicResource Tint}" BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="4" Padding="12,3" Margin="18,0">
+    <Border x:Name="PlayerScreen" Grid.Column="1" Background="{DynamicResource Side}" BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="4" Padding="12,3" Margin="18,0">
      <Grid x:Name="PlayerContent" ClipToBounds="True">
       <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition x:Name="SpectrumColumn" Width="*"/></Grid.ColumnDefinitions>
       <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+      <local:Visualizer x:Name="NowBars" Grid.ColumnSpan="2" BottomAligned="True" IsHitTestVisible="False" Focusable="False"/>
       <DockPanel><Image Source="{Binding Artwork}" DockPanel.Dock="Left" MaxWidth="52" MaxHeight="52" Stretch="Uniform" Margin="0,0,6,0"/><TextBlock x:Name="TimeDisplay" DockPanel.Dock="Right" Text="{Binding Clock}" ToolTip="{Binding ClipClock}" Foreground="{DynamicResource Accent}" FontFamily="Consolas" VerticalAlignment="Center" FontSize="18"/><StackPanel x:Name="TrackDetails"><TextBlock x:Name="TrackDisplay" Text="{Binding Now}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/><TextBlock Text="{Binding Byline}" Foreground="{DynamicResource Muted}" FontSize="11" TextTrimming="CharacterEllipsis"/></StackPanel></DockPanel>
-      <local:Visualizer x:Name="NowBars" Grid.Column="1" Height="26" Margin="8,0,0,0" VerticalAlignment="Center" BottomAligned="True" Opacity=".48" IsHitTestVisible="False" Focusable="False"/>
       <Slider Grid.Row="1" Grid.ColumnSpan="2" x:Name="SeekBar" IsEnabled="{Binding Seekable}" Height="16" AutomationProperties.Name="Original media position" Minimum="{Binding Minimum}" Maximum="{Binding Maximum}" Value="{Binding Position,Mode=OneWay}" PreviewMouseLeftButtonUp="SeekRelease" PreviewKeyUp="SeekKeys"/>
      </Grid>
     </Border>
@@ -82,7 +82,7 @@
     </StackPanel>
    </Grid>
   </Border>
-  <Border DockPanel.Dock="Bottom" Background="{DynamicResource Side}" BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0" Padding="12,5"><DockPanel><TextBlock DockPanel.Dock="Right" Margin="10,0,0,0" Text="{Binding LibraryProgress}" Foreground="{DynamicResource Accent}"/><TextBlock Text="{Binding Status}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Status}" Foreground="{DynamicResource Muted}"/></DockPanel></Border>
+  <Border DockPanel.Dock="Bottom" Background="{DynamicResource Side}" BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0" Padding="12,5"><DockPanel><Button DockPanel.Dock="Right" Content="Retry" Click="RetryBrowse" Margin="6,0,0,0" Padding="5,0"><Button.Style><Style TargetType="Button"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding CanRetryBrowse}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Button.Style></Button><TextBlock DockPanel.Dock="Right" Margin="10,0,0,0" Text="{Binding LibraryProgress}" AutomationProperties.LiveSetting="Polite" TextTrimming="CharacterEllipsis" ToolTip="{Binding LibraryProgress}" Foreground="{DynamicResource Accent}"/><TextBlock Text="{Binding Status}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Status}" Foreground="{DynamicResource Muted}"/></DockPanel></Border>
   <Grid x:Name="Body"><Grid.ColumnDefinitions><ColumnDefinition x:Name="RailWidth" Width="166" MinWidth="120" MaxWidth="460"/><ColumnDefinition Width="*" MinWidth="220"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
    <Border x:Name="Rail" Background="{DynamicResource Side}" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,1,0" Padding="10,15">
     <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel><StackPanel x:Name="SidebarBrand" Orientation="Horizontal" Margin="4,0,0,18"><Image Source="mixtape.png" Width="32" Height="32" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" SnapsToDevicePixels="True"/><TextBlock Text="Mixamp" Margin="7,0,0,0" FontWeight="Bold" FontSize="18"/></StackPanel><StackPanel x:Name="Sources"/>
@@ -101,22 +101,24 @@
      <local:Visualizer x:Name="Levels" Margin="8,4" AutomationProperties.Name="Playback level history"/>
     </Border>
     <Grid>
-    <DockPanel x:Name="RadioPane" Margin="14,0,14,8" Visibility="Collapsed">
+    <DockPanel x:Name="RadioPane" SizeChanged="RadioPaneResized" Margin="14,0,14,8" Visibility="Collapsed">
      <StackPanel DockPanel.Dock="Top">
       <Button x:Name="RadioBack" Click="BackToRadio" Content="‹  All stations" HorizontalAlignment="Left" Style="{StaticResource Key}"/>
-      <TextBlock x:Name="RadioHeading" FontSize="17" FontWeight="SemiBold" Margin="2,8"/>
+      <TextBlock x:Name="RadioHeading" TextWrapping="Wrap" FontSize="17" FontWeight="SemiBold" Margin="2,8"/>
       <TextBox x:Name="RadioSearch" TextChanged="FilterRadio" Padding="7,5" AutomationProperties.Name="Search radio choices"/>
-      <WrapPanel x:Name="RadioSeeds" Margin="0,6"/>
+      <ScrollViewer x:Name="SeedScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"><WrapPanel x:Name="RadioSeeds"/></ScrollViewer>
      </StackPanel>
-     <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,6">
-      <Button x:Name="AddSeed" Click="AddRadioSeed" Style="{StaticResource Key}" Content="Add selection"/>
+     <WrapPanel DockPanel.Dock="Bottom" Margin="0,6">
+      <Button x:Name="AddSeed" Margin="0,0,6,2" Click="AddRadioSeed" Style="{StaticResource Key}" Content="Add selection"/>
       <Button x:Name="PlayStation" Click="PlayRadioSelection" Style="{StaticResource Key}"/>
-     </StackPanel>
+     </WrapPanel>
      <Grid><ScrollViewer x:Name="StationScroll" VerticalScrollBarVisibility="Auto"><StackPanel x:Name="StationList"/></ScrollViewer>
-     <ListBox x:Name="RadioChoicesList" DisplayMemberPath="Name" AutomationProperties.Name="Radio choices" SelectionChanged="RadioSelectionChanged"
-       Background="{DynamicResource Paper}" Foreground="{DynamicResource Ink}" BorderThickness="0" VirtualizingPanel.VirtualizationMode="Recycling"/></Grid>
+     <ListBox x:Name="RadioChoicesList" ScrollViewer.HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch" AutomationProperties.Name="Radio choices" SelectionChanged="RadioSelectionChanged"
+       Background="{DynamicResource Paper}" Foreground="{DynamicResource Ink}" BorderThickness="0" VirtualizingPanel.VirtualizationMode="Recycling">
+      <ListBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding Name}" TextWrapping="Wrap" Padding="3,2"/></DataTemplate></ListBox.ItemTemplate>
+     </ListBox></Grid>
     </DockPanel>
-    <DataGrid x:Name="Songs" ItemsSource="{Binding Rows}" SelectedItem="{Binding Selected}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" SelectionMode="Extended" SelectionUnit="FullRow" EnableRowVirtualization="True" EnableColumnVirtualization="True" VirtualizingPanel.VirtualizationMode="Recycling" RowHeight="26" BorderThickness="0" GridLinesVisibility="None" Background="{DynamicResource Paper}" Foreground="{DynamicResource Ink}" RowBackground="{DynamicResource Paper}" AlternatingRowBackground="{DynamicResource Stripe}" MouseDoubleClick="DoubleClick" Sorting="SortGrid">
+    <DataGrid x:Name="Songs" ItemsSource="{Binding DisplayRows}" SelectedItem="{Binding Selected}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" HeadersVisibility="Column" SelectionMode="Extended" SelectionUnit="FullRow" EnableRowVirtualization="True" EnableColumnVirtualization="True" VirtualizingPanel.VirtualizationMode="Recycling" VirtualizingPanel.ScrollUnit="Item" RowHeight="26" BorderThickness="0" GridLinesVisibility="None" Background="{DynamicResource Paper}" Foreground="{DynamicResource Ink}" RowBackground="{DynamicResource Paper}" AlternatingRowBackground="{DynamicResource Stripe}" MouseDoubleClick="DoubleClick" Sorting="SortGrid">
      <DataGrid.Columns>
       <DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="2*" MinWidth="140"/>
       <DataGridTextColumn Header="Track artist" Binding="{Binding ArtistDisplay}" Width="*" MinWidth="94"/>

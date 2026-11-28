@@ -8,12 +8,13 @@ namespace Mixamp;
 // The Windows process-loopback endpoint limits analysis to this player.
 sealed class PlaybackSpectrum : IDisposable
 {
+    public const int BandCount = 24;
     const int Size = 2048, Rate = 44100;
     readonly CancellationTokenSource stop = new();
     readonly Complex[] fft = new Complex[Size];
     readonly float[] window = Enumerable.Range(0, Size)
         .Select(i => (float)FastFourierTransform.HannWindow(i, Size)).ToArray();
-    readonly float[] bands = new float[32];
+    readonly float[] bands = new float[BandCount];
     int used;
 
     public PlaybackSpectrum() => _ = Task.Run(Capture);

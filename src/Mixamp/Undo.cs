@@ -39,7 +39,6 @@ sealed partial class Session
         if (Path.Exists(destination)) throw new IOException("That filename is already in use.");
         var move = new ArtistMove(track, path, destination, target, File.GetLastWriteTimeUtc(path));
         await Task.Run(() => MoveWithUndo(move, maps, scope, Guid.NewGuid().ToString(), "Rename file"));
-        Store.InvalidateMovedPaths(scope, [track]);
         Status = "File renamed. Undo is available in Edit.";
         await api.Call($"/library/sections/{Plex.E(scope.Library)}/refresh");
     }
@@ -69,7 +68,6 @@ sealed partial class Session
                     case "Tags":
                         var maps = JsonSerializer.Deserialize<Mapping[]>(Store.Get(scope.Key, "mappings") ?? "[]")!;
                         await Task.Run(() => ArtistOrganizer.RestoreFile(c, maps));
-                        Store.InvalidateMovedPaths(scope, [c.Track]);
                         scan = true;
                         break;
                     case "Metadata":
@@ -90,7 +88,7 @@ sealed partial class Session
                         await api.SetFields(scope.Library, track, before);
                         break;
                     case "Cue":
-                        var cue = Store.ReadCue(scope, c.Track);
+                        var cue = await ReadCue(scope,c.Track);
                         if (cue != JsonSerializer.Deserialize<Cue>(c.Before) && cue != JsonSerializer.Deserialize<Cue>(c.After))
                             throw new IOException("The playback range changed after this edit.");
                         Store.SaveCue(scope, c.Track, JsonSerializer.Deserialize<Cue>(c.Before)!);

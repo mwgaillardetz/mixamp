@@ -1,33 +1,75 @@
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
+using Mixamp.Core;
 
 namespace Mixamp;
 
-static class Keychain
+sealed class Keychain(Store store)
 {
     const string Security = "/System/Library/Frameworks/Security.framework/Security";
-    const string Service = "Mixamp Plex", User = "Plex account";
-    [DllImport(Security)] static extern int SecKeychainFindGenericPassword(IntPtr keychain, uint serviceLength, string service, uint userLength, string user, out uint length, out IntPtr password, out IntPtr item);
-    [DllImport(Security)] static extern int SecKeychainItemFreeContent(IntPtr attributes, IntPtr data);
-    [DllImport(Security)] static extern int SecKeychainAddGenericPassword(IntPtr keychain,uint serviceLength,string service,uint userLength,string user,uint length,byte[] password,IntPtr item);
-    [DllImport(Security)] static extern int SecKeychainItemModifyAttributesAndData(IntPtr item,IntPtr attributes,uint length,byte[] password);
-    [DllImport(Security)] static extern int SecKeychainItemDelete(IntPtr item);
-    [DllImport("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")] static extern void CFRelease(IntPtr obj);
-    static string? Access(bool write,string? value)
+    const string Service = "Mixamp Plex", LegacyAccount = "Plex account", Preference = "plexKeychainAccount";
+    const int NotFound = -25300;
+    [DllImport(Security)] static extern int SecKeychainFindGenericPassword(nint keychain,uint serviceLength,string service,uint accountLength,string account,out uint length,out nint password,out nint item);
+    [DllImport(Security)] static extern int SecKeychainItemFreeContent(nint attributes,nint data);
+    [DllImport(Security)] static extern int SecKeychainAddGenericPassword(nint keychain,uint serviceLength,string service,uint accountLength,string account,uint length,byte[] password,nint item);
+    [DllImport(Security)] static extern int SecKeychainGetUserInteractionAllowed(out byte allowed);
+    [DllImport(Security)] static extern int SecKeychainSetUserInteractionAllowed(byte allowed);
+    [DllImport("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")] static extern void CFRelease(nint obj);
+
+    string? sessionLogin;
+    public string? SaveWarning { get; private set; }
+
+    // Older installations used a fixed account name. Only the item name goes in preferences.
+    string AccountName => store.Get("installation",Preference) ?? LegacyAccount;
+
+    public string? Read(bool allowPrompt)
     {
-        var status = SecKeychainFindGenericPassword(0,(uint)Service.Length,Service,(uint)User.Length,User,out uint length,out var data,out var item);
-        if (status != 0 && status != -25300) throw new IOException("Unable to access the Mixamp login in Keychain.");
-        try
+        if (sessionLogin != null) return sessionLogin;
+        var name = AccountName;
+        if (name.Length == 0) return null;
+        int status = SecKeychainGetUserInteractionAllowed(out byte allowed);
+        if (status == 0) status = SecKeychainSetUserInteractionAllowed(allowPrompt ? (byte)1 : (byte)0);
+        if (status == 0)
         {
-            if (!write) return status == 0 ? Marshal.PtrToStringUTF8(data, (int)length) : null;
-            var bytes = Encoding.UTF8.GetBytes(value ?? "");
-            status = status == 0 ? value == null ? SecKeychainItemDelete(item) : SecKeychainItemModifyAttributesAndData(item,0,(uint)bytes.Length,bytes)
-                : value == null ? 0 : SecKeychainAddGenericPassword(0,(uint)Service.Length,Service,(uint)User.Length,User,(uint)bytes.Length,bytes,0);
-            if (status != 0) throw new IOException("Unable to save the Mixamp login in Keychain.");
-            return null;
+            try
+            {
+                status = SecKeychainFindGenericPassword(0,(uint)Service.Length,Service,(uint)name.Length,name,out var length,out var data,out var item);
+                try
+                {
+                    if (status == 0 && length > 0) return sessionLogin=Marshal.PtrToStringUTF8(data,checked((int)length));
+                    if (status is 0 or NotFound) return null;
+                }
+                finally
+                {
+                    if (data != 0) SecKeychainItemFreeContent(0,data);
+                    if (item != 0) CFRelease(item);
+                }
+            }
+            finally { SecKeychainSetUserInteractionAllowed(allowed); }
         }
-        finally { if (data != 0) SecKeychainItemFreeContent(0,data); if (item != 0) CFRelease(item); }
+        if(status==-128)throw new IOException("Keychain approval canceled. Reconnect to try again.");
+        throw new IOException($"Keychain could not read the saved login (macOS {status}). Reconnect to retry, or use Library → Sign in with Plex to replace it.");
     }
-    public static string? Read() => Access(false,null);
-    public static void Write(string? value) => Access(true,value);
+
+    public void Write(string? token)
+    {
+        sessionLogin = token;
+        SaveWarning = null;
+        if (token == null)
+        {
+            // Plex has already revoked this token. Skip its item on the next sign-in.
+            store.Set("installation",Preference,"");
+            return;
+        }
+
+        // Create an item owned by this build. Switch the pointer only after the write succeeds.
+        var name = "Plex account " + Guid.NewGuid().ToString("N");
+        var bytes = Encoding.UTF8.GetBytes(token);
+        int status;
+        try { status = SecKeychainAddGenericPassword(0,(uint)Service.Length,Service,(uint)name.Length,name,(uint)bytes.Length,bytes,0); }
+        finally { CryptographicOperations.ZeroMemory(bytes); }
+        if (status == 0) store.Set("installation",Preference,name);
+        else SaveWarning = $"Connected for this session. Keychain could not save the Plex login (macOS {status}).";
+    }
 }

@@ -79,7 +79,8 @@ public sealed class Plex : IDisposable
     public async Task<JsonNode> Call(
         string path,
         HttpMethod? method = null,
-        CancellationToken ct = default
+        CancellationToken ct = default,
+        (int Offset,int Size)? window = null
     )
     {
         method ??= HttpMethod.Get;
@@ -88,6 +89,11 @@ public sealed class Plex : IDisposable
             try
             {
                 using var req = new HttpRequestMessage(method, Resolve(path));
+                if (window is {} page)
+                {
+                    req.Headers.Add("X-Plex-Container-Start",page.Offset.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    req.Headers.Add("X-Plex-Container-Size",page.Size.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                }
                 if (method != HttpMethod.Get)
                 {
                     // SocketsHttpHandler may replay a bodyless HTTP/1.1 request after an EOF.
@@ -125,6 +131,7 @@ public sealed class Plex : IDisposable
                 var body = await res.Content.ReadAsStringAsync(ct);
                 if (string.IsNullOrWhiteSpace(body) || body.Trim() == "OK")
                     return new JsonObject();
+                JsonNode container;
                 if (body.TrimStart().StartsWith('<'))
                 {
                     using var reader = System.Xml.XmlReader.Create(
@@ -137,11 +144,24 @@ public sealed class Plex : IDisposable
                         }
                     );
                     var root = System.Xml.Linq.XElement.Load(reader);
-                    return FromXml(root);
+                    container=FromXml(root);
                 }
-                var n = JsonNode.Parse(body)
-                    ?? throw new InvalidDataException("Empty Plex response.");
-                return n is JsonObject && n["MediaContainer"] is { } mc ? mc : n;
+                else
+                {
+                    var n = JsonNode.Parse(body) ?? throw new InvalidDataException("Empty Plex response.");
+                    container=n is JsonObject && n["MediaContainer"] is {} mc ? mc : n;
+                }
+                if(window.HasValue && container is JsonObject obj)
+                {
+                    CopyRangeHeader("X-Plex-Container-Start","offset");
+                    CopyRangeHeader("X-Plex-Container-Total-Size","totalSize");
+                    void CopyRangeHeader(string header,string key)
+                    {
+                        if(obj[key]==null && res.Headers.TryGetValues(header,out var values) && int.TryParse(values.FirstOrDefault(),out var count))
+                            obj[key]=count;
+                    }
+                }
+                return container;
             }
             catch (HttpRequestException ex)
                 when (method == HttpMethod.Get && attempt < 2 && ex.StatusCode == null)
@@ -166,6 +186,14 @@ public sealed class Plex : IDisposable
                 node[name] = children;
         }
         return node;
+    }
+
+    public async Task<HttpResponseMessage> OpenAudio(string key,RangeHeaderValue? range,CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get,Resolve(key));
+        request.Headers.Range = range;
+        request.Headers.Accept.ParseAdd("*/*");
+        return await client.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,ct).ConfigureAwait(false);
     }
 
     public async Task CopyOriginal(string key, Stream destination, CancellationToken ct)

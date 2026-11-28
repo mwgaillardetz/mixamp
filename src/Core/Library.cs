@@ -19,12 +19,13 @@ public sealed partial class Library(Plex api, Scope scope)
         var missing = await Task.Run(() => store.Revisions(scope), ct);
         bool incremental = missing.Count > 0, changed = false;
         bool lightweight = missing.Values.Any(v => v.StartsWith('['));
+        int pageSize = incremental ? 1024 : 256;
         int offset = 0, expected = -1;
         HashSet<string> seen = [];
         progress?.Invoke(0, expected, incremental);
         while (true)
         {
-            string path = $"/library/sections/{E(scope.Library)}/all?type=10&sort=id&X-Plex-Container-Start={offset}&X-Plex-Container-Size=256";
+            string path = $"/library/sections/{E(scope.Library)}/all?type=10&sort=id&X-Plex-Container-Start={offset}&X-Plex-Container-Size={pageSize}";
             var response = await api.Call(path + (lightweight ? "&excludeElements=Media" : ""), ct: ct);
             if (response["offset"] != null && response.Num("offset") != offset)
                 throw new IOException("Plex returned a different page.");
@@ -39,20 +40,26 @@ public sealed partial class Library(Plex api, Scope scope)
             var ids = page.Select(n => n.Str("ratingKey")).ToArray();
             if (ids.Any(id => id.Length == 0 || !seen.Add(id)) || page.Length == 0 && expected > offset)
                 throw new IOException("Incomplete Plex page.");
-            bool NeedsFull(JsonNode n) => !missing.TryGetValue(n.Str("ratingKey"), out var prior)
-                || n.Num("updatedAt") == 0 || Revision(n) != prior;
-            if (lightweight && page.Any(NeedsFull) && page.Any(n => n["Media"] == null))
+            var versions = page.Select(Revision).ToArray();
+            bool NeedsMedia(int i) => page[i]["Media"] == null && (versions[i].Length == 0 ||
+                !missing.TryGetValue(ids[i], out var prior) || versions[i] != prior);
+            if (lightweight && Enumerable.Range(0,page.Length).Any(NeedsMedia))
             {
                 var full = await api.Call(path, ct: ct);
                 page = full.Items("Metadata").ToArray();
                 if (!page.Select(n => n.Str("ratingKey")).SequenceEqual(ids))
                     throw new IOException("Library changed during sync. Sync again.");
+                versions = page.Select(Revision).ToArray();
             }
+            // Tracks without timestamps need their media for the content hash. Request it up
+            // front on the next page, then switch back when a page has reliable timestamps.
+            lightweight = incremental && Array.TrueForAll(versions, v => v.Length > 0);
             Dictionary<string,string> revisions = [];
             List<Track> updates = [];
-            foreach (var n in page)
+            for (int i = 0; i < page.Length; i++)
             {
-                string id = n.Str("ratingKey"), version = Revision(n);
+                var n = page[i];
+                string id = ids[i], version = versions[i];
                 missing.Remove(id, out var prior);
                 if (version.Length > 0 && version == prior) continue;
                 var track = Track.Read(n);
@@ -228,10 +235,45 @@ public sealed partial class Library(Plex api, Scope scope)
     public Task<JsonNode> ContinueQueue(string id, string last) =>
         api.Call($"/playQueues/{E(id)}?center={E(last)}&window=50");
 
-    public async Task<List<JsonNode>> Playlists() =>
-        (await api.Call("/playlists?playlistType=audio")).Items("Metadata").ToList();
+    public async Task<List<JsonNode>> Playlists(CancellationToken ct=default) =>
+        (await api.Call("/playlists?playlistType=audio",ct:ct)).Items("Metadata").ToList();
 
-    public Task<JsonNode> PlaylistItems(string id) => api.Call($"/playlists/{E(id)}/items");
+    public sealed record PlaylistPage(List<Track> Tracks,int End,int? Total,bool More,List<int> Missing)
+    {
+        public int Skipped => Missing.Count;
+    }
+
+    public async Task<PlaylistPage> PlaylistTracks(string id,int offset,CancellationToken ct=default,int size=SongPage.Size)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        var page=await api.Call($"/playlists/{E(id)}/items?X-Plex-Container-Start={offset}&X-Plex-Container-Size={size}",ct:ct,window:(offset,size)).ConfigureAwait(false);
+        if(page is not JsonObject)throw new IOException("Plex returned an unreadable playlist.");
+        int? Count(string key) => page[key]==null ? null :
+            int.TryParse(page.Str(key),out var n) && n>=0 ? n : throw new IOException("Plex returned an invalid playlist range.");
+        var start=Count("offset");
+        var total=Count("totalSize");
+        if(start!=null && start!=offset)throw new IOException("Plex returned a different playlist range. Reopen the playlist.");
+        var rows=page["Metadata"];
+        int count=rows switch {
+            JsonArray array=>array.Count, JsonObject=>1, null when page.Num("size")==0=>0,
+            _=>throw new IOException("Plex returned an unreadable playlist entry list.")
+        };
+        int end=checked(offset+count);
+        // Unpaged responses (no range or total) contain the full playlist, even when its size is a multiple of the requested size.
+        bool more=total.HasValue ? end<total : start.HasValue && count>=size;
+        if(total.HasValue && end>total || count==0 && more || offset>0 && start==null && total==null)
+            throw new IOException("The playlist changed or Plex returned an incomplete range. Reopen the playlist.");
+        var tracks=new List<Track>(count);
+        var missing=new List<int>();
+        for(int i=0;i<count;i++)
+        {
+            var row=rows is JsonArray entries ? entries[i] : rows;
+            if(row is not JsonObject || row.Str("type") is not ("" or "track") || string.IsNullOrWhiteSpace(row.Str("ratingKey")))
+            {missing.Add(i);continue;}
+            tracks.Add(Track.Read(row));
+        }
+        return new(tracks,end,total,more,missing);
+    }
 
     public Task<JsonNode> AddToPlaylist(string? id, string name, Track track)
     {

@@ -49,6 +49,31 @@ try
             [new(i.ToString(), "/part/" + i, "/demo/" + i + ".flac", 12345, "flac")]
         );
     var track = Make(1);
+    var startupStore = new Store(Path.Combine(dir.FullName,"startup"),useCatalog:false);
+    var firstRange = new SongPage(Enumerable.Range(0,128).Select(Make).ToList(),31000,true);
+    startupStore.SaveLaunchSongs(scope,"Title",false,firstRange);
+    Check(startupStore.ReadLaunchSongs(scope,"title",false) is { Total:31000, Tracks.Count:128 } &&
+        startupStore.ReadLaunchSongs(scope with { Account="other" },"Title",false)==null &&
+        startupStore.ReadLaunchSongs(scope,"Title",true)==null,
+        "launch snapshot retains the full scroll extent and is scoped to account, library and sort");
+    startupStore.SaveLaunchSongs(scope,"Year",true,new([Make(2)],1,false));
+    Check(startupStore.ReadLaunchSongs(scope,"Title",false)==null &&
+        startupStore.ReadLaunchSongs(scope,"Year",true)?.Tracks.Single().Id=="2" &&
+        !File.Exists(Path.Combine(dir.FullName,"startup","catalog.db")),
+        "only one launch snapshot is retained across sorts");
+    startupStore.Set("installation","launchSongs","{bad");
+    Check(startupStore.ReadLaunchSongs(scope,"Year",true)==null,"a damaged startup snapshot falls back to live browsing");
+    var virtualRows = new Mixamp.SongRows();
+    virtualRows.Apply(0, new(Enumerable.Range(0, 128).Select(Make).ToList(), 31000, true), 0, _ => false);
+    var finalPlaceholder = virtualRows[30999];
+    Check(virtualRows.Count == 31000 && virtualRows.IndexOf(finalPlaceholder) == 30999,
+        "Windows Songs exposes the entire scrollbar after the first request");
+    var pinned = virtualRows[5];
+    virtualRows.Apply(30976, new(Enumerable.Range(30976, 24).Select(Make).ToList(), 31000, false),
+        30976, row => ReferenceEquals(row, pinned));
+    Check(virtualRows[30999].Id == "30999" && virtualRows.IndexOf(finalPlaceholder) == -1 &&
+        virtualRows[0] is Mixamp.SongRows.Placeholder && virtualRows[5] == pinned && !virtualRows.HasPage(0),
+        "Windows jumps directly to the last track and releases distant unselected tracks");
     Check(ToneProfile.Choose("Auto","Jazz, Blues") == ToneProfile.Warm &&
         ToneProfile.Choose("Auto","Jazz; House") == ToneProfile.Flat && ToneProfile.Choose("Auto","") == ToneProfile.Flat &&
         ToneProfile.Choose("Auto","Unclassified") == ToneProfile.Flat && ToneProfile.Choose("Punch","") == ToneProfile.Punch,
@@ -339,6 +364,26 @@ try
             "verified disposable fixture identity"
         );
         var library = new Library(api, scope);
+        var firstSongs=await library.Songs(0,"title",false,"");
+        Check(firstSongs.Tracks.Count==Math.Min(SongPage.Size,firstSongs.Total!.Value),"browsing fetches a bounded first range");
+        var lastOffset=Math.Max(0,firstSongs.Total.Value-3);
+        var lastSongs=await library.Songs(lastOffset,"title",false,"");
+        Check(lastSongs.Tracks.Count==3 && !lastSongs.More,"scroll directly to the final three songs");
+        var searched=await library.Songs(0,"title",true,"Night Ferry");
+        Check(searched.Tracks.Count>0 && searched.Tracks.All(t=>t.Title.Contains("Night Ferry")),"search applies across the server library");
+        var reversed=await library.Songs(0,"title",true," FERRY   night ");
+        Check(reversed.Total==searched.Total && reversed.Tracks.Select(t=>t.Id).SequenceEqual(searched.Tracks.Select(t=>t.Id)),
+            "library search matches all words in either order and preserves the selected sort");
+        var across=await library.Songs(0,"title",false,"tapes night");
+        Check(across.Tracks.Count>0 && across.Tracks.All(t=>t.Title.Contains("Night") && t.Album.Contains("Tapes")),
+            "search words can match separate title and album fields");
+        var browser=new PlaylistBrowser(library,"fixture-ranges");
+        var window=await browser.Read(128);
+        Check(window.Total==137 && window.Tracks.Count==9 && window.Tracks[0].PlaylistItem=="129","jump directly to a distant playlist entry");
+        var unfiltered=await browser.Read(0);
+        Check(unfiltered.Tracks.Count==128 && unfiltered.Tracks[60].Id=="" && unfiltered.Tracks[61].PlaylistItem=="62","unavailable entries retain their playlist positions");
+        var matching=await browser.Read(0,"ferry night");
+        Check(matching.Tracks.Count>0 && matching.Tracks.All(t=>t.Title.Contains("Night Ferry")) && !matching.More,"search scans the playlist for reordered words");
         int first = 0;
         await library.Sync(
             store,
@@ -378,9 +423,8 @@ try
         }
         var sonic=await library.StartRadio(new("sonic","","Similar radio"),["1"],store);
         var neighbors=sonic.Items("Metadata").Select(Track.Read).ToArray();
-        Check(neighbors.Select(t=>t.Id).SequenceEqual(new[]{"1","2","3","4"}),"sonic radio starts with the seed and Plex nearest tracks");
-        var tail=await library.ContinueSonic(sonic.Str("playQueueID"),neighbors[^1].QueueItem,neighbors[^1].Id,neighbors.Select(t=>t.Id).ToArray());
-        Check(tail.Items("Metadata").Last().Str("ratingKey")=="7","sonic radio extends using the last track");
+        Check(neighbors.Select(t=>t.Id).SequenceEqual(Enumerable.Range(1,30).Select(i=>i.ToString())),
+            "sonic radio fills a 30-track queue in proximity order without repeated tracks");
         var station = (await library.Stations(null)).Single();
         var offers = await library.RadioStations();
         var genre = offers.Single(o=>o.Name=="Genre Radio");
@@ -399,8 +443,17 @@ try
                 && more.Items("Metadata").Last().Str("playQueueItemID") != firstBatch[^1].QueueItem,
             "station continuation and repeated recording identity"
         );
+        var ranged=await library.PlaylistTracks("fixture-ranges",0);
+        Check(ranged.More && ranged.End==50 && ranged.Total==137 && ranged.Tracks[33].Parts.Length==1,
+            "playlist respects server range headers and ignores malformed optional media");
+        var middle=await library.PlaylistTracks("fixture-ranges",ranged.End);
+        var last=await library.PlaylistTracks("fixture-ranges",middle.End);
+        Check(middle.More && middle.Skipped==1 && !last.More && last.End==137 &&
+            ranged.Tracks.Concat(middle.Tracks).Concat(last.Tracks).Select(t=>t.PlaylistItem)
+                .SequenceEqual(Enumerable.Range(1,137).Where(i=>i!=61).Select(i=>i.ToString())),
+            "playlist offsets include unavailable entries and preserve duplicate recordings in server order");
         var empty = (await library.CreatePlaylist("Empty")).Items("Metadata").Single().Str("ratingKey");
-        Check(!(await library.PlaylistItems(empty)).Items("Metadata").Any(), "create an empty playlist");
+        Check(!(await library.PlaylistTracks(empty,0)).Tracks.Any(), "create an empty playlist");
         await library.DeletePlaylist(empty);
         Check(!(await library.Playlists()).Any(p => p.Str("ratingKey") == empty), "remove whole playlist");
         var pl = (await library.AddToPlaylist(null, "Fixture playlist", t))
@@ -408,16 +461,16 @@ try
             .Single()
             .Str("ratingKey");
         await library.AddToPlaylist(pl, "", t);
-        var items = (await library.PlaylistItems(pl)).Items("Metadata").Select(Track.Read).ToList();
+        var items = (await library.PlaylistTracks(pl,0)).Tracks;
         await library.Move(pl, items[1].PlaylistItem, "0");
         Check(
-            (await library.PlaylistItems(pl)).Items("Metadata").First().Str("playlistItemID")
+            (await library.PlaylistTracks(pl,0)).Tracks.First().PlaylistItem
                 == items[1].PlaylistItem,
             "move duplicate by playlist entry"
         );
         await library.Remove(pl, items[0].PlaylistItem);
         Check(
-            (await library.PlaylistItems(pl)).Items("Metadata").Count() == 1
+            (await library.PlaylistTracks(pl,0)).Tracks.Count == 1
                 && (await api.Fresh("1")).Parts.Length == 1,
             "playlist removal retains source"
         );

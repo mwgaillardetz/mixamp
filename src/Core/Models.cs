@@ -75,10 +75,10 @@ public record Track(
 
     public static Track Read(JsonNode n)
     {
-        var media = n.Items("Media").ToArray();
+        var media = n.Objects("Media").ToArray();
         var parts = media
             .SelectMany(m =>
-                m.Items("Part")
+                m.Objects("Part")
                     .Select(p => new Part(
                         p.Str("id"),
                         CleanKey(p.Str("key")),
@@ -100,7 +100,7 @@ public record Track(
             (int)n.Num("index"),
             (int)n.Num("year"),
             n.Num("duration"),
-            string.Join(", ", n.Items("Genre").Select(g => g.Str("tag"))),
+            string.Join(", ", n.Objects("Genre").Select(g => g.Str("tag"))),
             media.FirstOrDefault()?.Str("audioCodec") ?? "",
             (int)(media.FirstOrDefault()?.Num("bitrate") ?? 0),
             n.Str("guid"),
@@ -118,6 +118,13 @@ public static class Nodes
     public static string Str(this JsonNode n, string k) => n[k]?.ToString() ?? "";
 
     public static long Num(this JsonNode n, string k) => long.TryParse(n.Str(k), out var x) ? x : 0;
+
+    public static IEnumerable<JsonObject> Objects(this JsonNode n,string key) => n[key] switch
+    {
+        JsonArray array => array.OfType<JsonObject>(),
+        JsonObject single => [single],
+        _ => []
+    };
 
     public static IEnumerable<JsonNode> Items(this JsonNode n, string k) =>
         (n[k] as JsonArray ?? []).OfType<JsonNode>();

@@ -41,10 +41,17 @@ public partial class MainWindow : Window
             if (Directory.Exists(previous))
                 Directory.Move(previous, dir);
         }
-        vm = new(new Store(dir), new Playback());
+        vm = new(new Store(dir,useCatalog:false), new Playback());
         DataContext = vm;
         vm.SelectedIndex = () => Songs.SelectedIndex;
         vm.Selection = () => Songs.SelectedItems.Cast<Mixamp.Core.Track>().ToArray();
+        vm.PlaylistsExpanded = () => PlaylistFolder.IsExpanded;
+        vm.IsRowSelected = t => Songs.SelectedItems.Contains(t);
+        Songs.AddHandler(ScrollViewer.ScrollChangedEvent,new ScrollChangedEventHandler(async (_,e)=>{
+            if(e.VerticalChange==0 && e.ViewportHeightChange==0 && e.ExtentHeightChange==0)return;
+            try { await vm.Viewport((int)e.VerticalOffset,(int)Math.Ceiling(e.VerticalOffset+e.ViewportHeight)); }
+            catch(Exception ex){vm.Status=Session.Message(ex);}
+        }));
         MenuItem Item(string cmd) =>
             new()
             {
@@ -55,12 +62,13 @@ public partial class MainWindow : Window
                 Command = vm.Action,
                 CommandParameter = cmd,
             };
-        void Menu(string name, params string[] cmds)
+        MenuItem Menu(string name, params string[] cmds)
         {
             var m = new MenuItem { Header = name };
             Menus.Items.Add(m);
             foreach (var c in cmds)
                 m.Items.Add(Item(c));
+            return m;
         }
         Menu("_Library", "Connect", "Demo", "Cancel", "Sync", "Share mapping", "Local clip");
         Menu(
@@ -103,6 +111,11 @@ public partial class MainWindow : Window
             "Artist radio",
             "Internet radio"
         );
+        var castMenu=Menu("_Cast","Google Cast…","Resume on speaker","Pause on speaker","Previous on speaker","Next on speaker","Stop casting");
+        castMenu.Header=new TextBlock { Text="\uEC15",FontFamily=new FontFamily("Segoe MDL2 Assets"),FontSize=16 };
+        castMenu.ToolTip="Cast to a device";
+        System.Windows.Automation.AutomationProperties.SetName(castMenu,"Cast to a device");
+        AccessKeyManager.Register("C",castMenu);
         var repeat = new MenuItem { Header = "Repeat track", IsCheckable = true };
         repeat.Click += (s, e) => vm.Repeat = repeat.IsChecked;
         ((MenuItem)Menus.Items[2]).Items.Add(repeat);
@@ -169,6 +182,7 @@ public partial class MainWindow : Window
             option.Click += (_, _) => Apply(entry.Name);
         }
         ConfigureColumns();
+        vm.RestoreSort(Songs.Columns.Select(c => c.SortMemberPath));
         var visualizer = new MenuItem { Header = "Visualizer", IsCheckable = true,
             IsChecked = vm.Store.Get("installation", "visualizer") == "on" };
         ((MenuItem)Menus.Items[0]).Items.Add(visualizer);
@@ -183,9 +197,26 @@ public partial class MainWindow : Window
         var bars = new MenuItem { Header = "Now Playing bars", IsCheckable = true,
             IsChecked = vm.Store.Get("installation", "nowBars") != "off" };
         ((MenuItem)Menus.Items[0]).Items.Add(bars);
+        var backdropMenu = new MenuItem { Header = "Background visualizer" };
+        appearance.Items.Add(backdropMenu);
+        NowBars.Backdrop = VisualizerStyles.Resolve(vm.Store.Get("installation", "visualizerBackground"));
+        foreach (var style in VisualizerStyles.All)
+        {
+            var option = new MenuItem { Header = style, IsCheckable = true, IsChecked = style == NowBars.Backdrop };
+            backdropMenu.Items.Add(option);
+            option.Click += (_, _) =>
+            {
+                NowBars.Backdrop = style;
+                foreach (MenuItem choice in backdropMenu.Items) choice.IsChecked = Equals(choice.Header, style);
+                DisplayBars();
+                vm.Store.Set("installation", "visualizerBackground", style);
+            };
+        }
         void DisplayBars()
         {
-            NowBars.Visibility = bars.IsChecked ? Visibility.Visible : Visibility.Collapsed;
+            NowBars.ShowMeter = bars.IsChecked;
+            NowBars.Visibility = bars.IsChecked || NowBars.Backdrop != VisualizerStyles.Off ? Visibility.Visible : Visibility.Collapsed;
+            NowBars.InvalidateVisual();
             SpectrumColumn.Width = bars.IsChecked ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
         }
         DisplayBars();
@@ -260,6 +291,8 @@ public partial class MainWindow : Window
                     Songs.CurrentCell = new DataGridCellInfo(Songs.Items[0], Songs.Columns.First(c => c.Visibility == Visibility.Visible));
                     Songs.Focus();
                 }));
+            if (e.PropertyName == nameof(vm.Rows) && vm.Section is ("Songs" or "Playlists"))
+                Dispatcher.BeginInvoke(new Action(UpdateSongSort));
             if (e.PropertyName == nameof(vm.Playlists))
                 DisplayPlaylists();
         };
@@ -317,7 +350,7 @@ public partial class MainWindow : Window
                     await Probe(args[1], args[2], args[3]);
                     return;
                 }
-                await vm.Cached(reconnect: true);
+                await vm.Resume();
             }
             catch (Exception ex)
             {
@@ -401,8 +434,8 @@ public partial class MainWindow : Window
         var side = ((SolidColorBrush)FindResource("Side")).Color;
         var ink = ((SolidColorBrush)FindResource("Ink")).Color;
         int dark = !SystemParameters.HighContrast && side.R + side.G + side.B < 384 ? 1 : 0;
-        bool glass=ApplyGlass(handle);
-        int caption = glass || SystemParameters.HighContrast ? -1 : ColorRef(side);
+        ApplyGlass(handle);
+        int caption = SystemParameters.HighContrast ? -1 : ColorRef(side);
         int title = SystemParameters.HighContrast ? -1 : ColorRef(ink);
         DwmSetWindowAttribute(handle, 20, ref dark, sizeof(int));    // DWMWA_USE_IMMERSIVE_DARK_MODE
         DwmSetWindowAttribute(handle, 35, ref caption, sizeof(int)); // DWMWA_CAPTION_COLOR
@@ -437,7 +470,6 @@ public partial class MainWindow : Window
         Songs.Resources[SystemColors.HighlightTextBrushKey] = dict["Ink"];
         Resources.MergedDictionaries.Clear();
         Resources.MergedDictionaries.Add(dict);
-        ApplyCaption();
         bool amp = theme == "Bitstream 98" && !SystemParameters.HighContrast;
         ClassicTitle.Visibility = amp ? Visibility.Visible : Visibility.Collapsed;
         SidebarBrand.Visibility = amp ? Visibility.Collapsed : Visibility.Visible;
@@ -466,9 +498,8 @@ public partial class MainWindow : Window
             Grid.SetColumnSpan(SeekBar,2);
             SeekBar.Margin = new Thickness(0);
         }
-        PlayerScreen.CornerRadius = new CornerRadius(amp ? 0 : 4);
+        PlayerScreen.CornerRadius = new CornerRadius(amp ? 0 : 12);
         PlayerScreen.BorderThickness = new Thickness(amp ? 2 : 1);
-        PlayerScreen.SetResourceReference(Border.BackgroundProperty, amp ? "Paper" : "Tint");
         PlayerScreen.SetResourceReference(Border.BorderBrushProperty, amp ? "Canvas" : "Line");
         PlayerDeck.Padding = amp ? new Thickness(8,4,8,6) : new Thickness(12,9,12,9);
         TrackDisplay.SetResourceReference(TextBlock.ForegroundProperty, amp ? "Accent" : "Ink");
@@ -485,6 +516,7 @@ public partial class MainWindow : Window
             else icon.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, play ? "Paper" : "Ink");
         }
         SeekBar.Style = VolumeBar.Style = (Style)FindResource(amp ? "MetalFader" : "PlayerFader");
+        ApplyCaption();
         vm.Store.Set("installation", "theme", theme);
     }
 
@@ -510,19 +542,25 @@ public partial class MainWindow : Window
             vm.Action.Execute("Play");
     }
 
+    async void RetryBrowse(object sender,RoutedEventArgs e) => await PlaylistAction(vm.RetryBrowse);
+
+    void UpdateSongSort()
+    {
+        if (vm.Section is not ("Songs" or "Playlists")) return;
+        foreach (var column in Songs.Columns)
+            column.SortDirection = column.SortMemberPath == vm.SortColumn
+                ? vm.Descending ? System.ComponentModel.ListSortDirection.Descending : System.ComponentModel.ListSortDirection.Ascending
+                : null;
+    }
+
     async void SortGrid(object s, DataGridSortingEventArgs e)
     {
-        if (vm.Section != "Songs")
+        if (vm.Section is not ("Songs" or "Playlists"))
             return;
         e.Handled = true;
         try
         {
-            var task = vm.Sort(e.Column.SortMemberPath);
-            foreach (var col in Songs.Columns)
-                col.SortDirection = col == e.Column
-                    ? vm.Descending ? System.ComponentModel.ListSortDirection.Descending : System.ComponentModel.ListSortDirection.Ascending
-                    : null;
-            await task;
+            await vm.Sort(e.Column.SortMemberPath);
         }
         catch (Exception ex)
         {

@@ -30,7 +30,7 @@ internal static partial class MacTitleBar
             if (Marshal.PtrToStringUTF8(Get(title, sel_registerName("UTF8String"))) != "Mixamp") continue;
             var web=WebView(Get(window,sel_registerName("contentView")),objc_getClass("WKWebView"));
             if(web==0)continue;
-            var rgb = Convert.FromHexString(theme.Palette.Side[1..]);
+            var rgb = Convert.FromHexString(theme.Palette.DeckTop[1..]);
             var color = Color(objc_getClass("NSColor"), sel_registerName("colorWithSRGBRed:green:blue:alpha:"),
                 rgb[0]/255d, rgb[1]/255d, rgb[2]/255d, 1);
             var style = rgb[0]+rgb[1]+rgb[2] < 384 ? "NSAppearanceNameDarkAqua" : "NSAppearanceNameAqua";
@@ -50,9 +50,22 @@ internal static partial class MacTitleBar
                     Console.WriteLine("Native glass applied and restored for reduced transparency");
                 }
             }
-            if(active) color=Get(objc_getClass("NSColor"),sel_registerName("clearColor"));
+            if(active)
+            {
+                var tint=Color(objc_getClass("NSColor"),sel_registerName("colorWithSRGBRed:green:blue:alpha:"),
+                    rgb[0]/255d,rgb[1]/255d,rgb[2]/255d,.36);
+                SetObject(materialTint,sel_registerName("setFillColor:"),tint);
+                if(HasPlaybackGlass)
+                {
+                    var glassTint=Color(objc_getClass("NSColor"),sel_registerName("colorWithSRGBRed:green:blue:alpha:"),
+                        rgb[0]/255d,rgb[1]/255d,rgb[2]/255d,.3);
+                    foreach(var panel in playbackGlass)SetObject(panel,sel_registerName("setTintColor:"),glassTint);
+                }
+                color=Get(objc_getClass("NSColor"),sel_registerName("clearColor"));
+            }
             SetObject(window, sel_registerName("setBackgroundColor:"), color);
-            SetBool(window, sel_registerName("setTitlebarAppearsTransparent:"), active?(byte)0:(byte)1);
+            SetBool(window, sel_registerName("setTitlebarAppearsTransparent:"), 1);
+            SetObject(window, sel_registerName("setTitlebarSeparatorStyle:"), 1); // NSTitlebarSeparatorStyleNone
             return true;
         }
         if(checkWindow) Console.WriteLine("Mixamp window with its WKWebView was unavailable");

@@ -42,9 +42,26 @@ public sealed partial class Library
         { return []; }
     }
 
-    public async Task<List<RadioChoice>> RadioChoices(RadioOption option, Store store)
+    public async Task<List<RadioChoice>> RadioChoices(RadioOption option, Store? store)
     {
-        if (option.Kind is "artist" or "album") return await Task.Run(() => store.MixSeeds(scope, option.Kind));
+        if (option.Kind is "artist" or "album")
+        {
+            if (store != null) return await Task.Run(() => store.MixSeeds(scope, option.Kind));
+            List<RadioChoice> choices = [];
+            int type = option.Kind == "artist" ? 8 : 9;
+            int offset = 0;
+            while (true)
+            {
+                var page = await api.Call($"/library/sections/{E(scope.Library)}/all?type={type}&X-Plex-Container-Start={offset}&X-Plex-Container-Size=256");
+                var rows = page.Items("Metadata").ToArray();
+                if (page["offset"] != null && page.Num("offset") != offset) throw new IOException("Plex returned a different page.");
+                choices.AddRange(rows.Select(n => new RadioChoice(n.Str("ratingKey"), option.Kind=="album" && n.Str("parentTitle")!="" ?
+                    n.Str("title")+" — "+n.Str("parentTitle") : n.Str("title"))));
+                offset += rows.Length;
+                if (rows.Length==0 || (page["totalSize"]!=null ? offset>=page.Num("totalSize") : rows.Length<256)) break;
+            }
+            return choices;
+        }
         if (option.Kind == "folder")
         {
             var folder = await api.Call(option.Key);
@@ -57,48 +74,64 @@ public sealed partial class Library
         return result.Items("Directory").Select(n => new RadioChoice(n.Str("key"), n.Str("title"))).ToList();
     }
 
-    async Task<List<string>> SonicNeighbors(string id)
+    async Task<List<string>> SonicTracks(string id)
     {
+        const int stationSize = 30;
         var seed = await api.Fresh(id);
         if (seed.LibraryId != scope.Library) throw new IOException("Select a track in the connected library.");
-        JsonNode near;
-        try { near = await api.Call("/library/metadata/" + E(id) + "/nearest?limit=50"); }
-        catch (HttpRequestException ex) when (ex.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.BadRequest)
-        { throw new IOException("Sonic radio requires a Plex library with completed sonic analysis.",ex); }
-        return near.Items("Metadata").Where(n => n.Str("type") == "track" &&
-            (n.Str("librarySectionID") == "" || n.Str("librarySectionID") == scope.Library))
-            .Select(n => n.Str("ratingKey")).Where(k => k.Length > 0 && k != id).Distinct().ToList();
+        List<string> tracks = [id];
+        HashSet<string> keys = [id], recordings = [seed.Guid];
+        // Prefer the seed's nearest tracks. Explore their neighbors if Plex returns a short list.
+        for (int i = 0; i < tracks.Count && tracks.Count < stationSize; i++)
+        {
+            JsonNode near;
+            try { near = await api.Call("/library/metadata/" + E(tracks[i]) + "/nearest?limit=50"); }
+            catch (HttpRequestException ex) when (ex.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.BadRequest)
+            {
+                if (i == 0) throw new IOException("Sonic radio requires a Plex library with completed sonic analysis.", ex);
+                continue;
+            }
+            foreach (var entry in near.Items("Metadata"))
+            {
+                var key = entry.Str("ratingKey");
+                var library = entry.Str("librarySectionID");
+                var guid = entry.Str("guid");
+                if (entry.Str("type") != "track" || library != "" && library != scope.Library ||
+                    key == "" || !keys.Add(key) || guid != "" && !recordings.Add(guid)) continue;
+                tracks.Add(key);
+                if (tracks.Count == stationSize) break;
+            }
+        }
+        if (tracks.Count == 1) throw new IOException("Plex found no sonically similar tracks. Check sonic analysis for this library.");
+        return tracks;
     }
 
-    public async Task<JsonNode> ContinueSonic(string queueId,string last,string seed,IReadOnlyList<string> played)
-    {
-        var window=await ContinueQueue(queueId,last);
-        var entries=window.Items("Metadata").ToList();
-        int anchor=entries.FindIndex(t=>t.Str("playQueueItemID")==last);
-        if(anchor<0 || anchor+1<entries.Count)
-            return window;
-        var next=(await SonicNeighbors(seed)).Except(played).Take(25).Select(E).ToArray();
-        if(next.Length==0)return window;
-        var uri="library:///directory/"+E("/library/metadata/"+string.Join(",",next));
-        await api.Call("/playQueues/"+E(queueId)+"?uri="+E(uri),HttpMethod.Put);
-        return await ContinueQueue(queueId,last);
-    }
-
-    public async Task<JsonNode> StartRadio(RadioOption option, IReadOnlyList<string> choices, Store store)
+    public async Task<JsonNode> StartRadio(RadioOption option, IReadOnlyList<string> choices, Store? store)
     {
         if (option.Kind == "station") return await StationQueue(option.Key);
         if (option.Kind == "folder") return await StationQueue(choices.Single());
         string path;
         if (option.Kind == "sonic")
         {
-            var id = choices.Single();
-            var ids = await SonicNeighbors(id);
-            if (ids.Count == 0) throw new IOException("Plex found no sonically similar tracks. Check sonic analysis for this library.");
-            path = "/library/metadata/" + string.Join(",", ids.Prepend(id).Select(E));
+            var ids = await SonicTracks(choices.Single());
+            path = "/library/metadata/" + string.Join(",", ids.Select(E));
         }
         else if (option.Kind is "artist" or "album")
         {
-            var tracks = await Task.Run(() => store.MixTrackIds(scope, option.Kind, choices));
+            List<string> tracks;
+            if (store != null) tracks = await Task.Run(() => store.MixTrackIds(scope, option.Kind, choices));
+            else
+            {
+                if (choices.Count is 0 or >100) throw new ArgumentException("Choose between 1 and 100 seeds.");
+                List<Queue<string>> groups = [];
+                foreach (var seed in choices.Distinct())
+                {
+                    var page = await api.Call($"/library/sections/{E(scope.Library)}/all?type=10&{option.Kind}.id={E(seed)}&sort=random&X-Plex-Container-Size=100");
+                    var group = new Queue<string>(page.Items("Metadata").Select(n => n.Str("ratingKey")).Where(id => id!="").Take(100));
+                    if (group.Count>0) groups.Add(group);
+                }
+                tracks = Store.InterleaveMix(groups);
+            }
             if (tracks.Count == 0) throw new IOException("No tracks are available for this mix.");
             path = "/library/metadata/" + string.Join(",", tracks.Select(E));
         }

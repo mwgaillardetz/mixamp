@@ -13,3 +13,7 @@ Plex is a trademark of its respective owner. Mixamp is an independent client. Au
 NAudio.Wasapi and NAudio.Core 3.3.0 provide the Windows playback meter and spectrum analysis. Their MIT license is included in notices/NAudio.txt.
 
 The macOS distribution includes Photino.NET 4.0.16 and Photino.Native 4.0.22 (Apache License 2.0, included in notices/SQLitePCLRaw.txt), ASP.NET Core and the .NET runtime (MIT). Photino uses the system WebKit framework.
+
+Google Cast support uses SharpCaster, Zeroconf and System.Reactive (MIT), and Google.Protobuf (BSD 3-Clause). Their license texts are included in notices.
+
+Mixamp adapts three color palettes for its player controls. [Dracula](https://draculatheme.com/contribute) · [Nord](https://www.nordtheme.com/docs/colors-and-palettes/) · [Solarized by Ethan Schoonover](https://ethanschoonover.com/solarized/)

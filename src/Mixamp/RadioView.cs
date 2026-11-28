@@ -8,6 +8,8 @@ public partial class MainWindow
     int radioViewVersion;
     bool IsMix => radioOption?.Kind is "artist" or "album";
 
+    void RadioPaneResized(object sender,SizeChangedEventArgs e) { if (SeedScroll != null) SeedScroll.MaxHeight=e.NewSize.Height*.22; }
+
     void DisplayRadio()
     {
         ++radioViewVersion;
@@ -68,8 +70,8 @@ public partial class MainWindow
     void FilterRadio(object sender, TextChangedEventArgs? e)
     {
         if (RadioChoicesList == null || radioOption == null) return;
-        var term = RadioSearch.Text.Trim();
-        RadioChoicesList.ItemsSource = radioChoices.Where(x => x.Name.Contains(term, StringComparison.CurrentCultureIgnoreCase)
+        var words=MusicSearch.Words(RadioSearch.Text);
+        RadioChoicesList.ItemsSource = radioChoices.Where(x => words.All(word=>x.Name.Contains(word,StringComparison.OrdinalIgnoreCase))
             && !mixSeeds.Contains(x)).ToList();
         UpdateRadioButtons();
     }
@@ -86,7 +88,7 @@ public partial class MainWindow
     {
         if (RadioChoicesList.SelectedItem is not RadioChoice seed || mixSeeds.Contains(seed)) return;
         mixSeeds.Add(seed);
-        var remove = new Button { Content = seed.Name + "  ×", ToolTip = "Remove " + seed.Name, Style = (Style)FindResource("Key") };
+        var remove = new Button { Content = new TextBlock { Text=seed.Name+"  ×", TextWrapping=TextWrapping.Wrap }, Margin=new Thickness(0,3,5,2), ToolTip = "Remove " + seed.Name, Style = (Style)FindResource("Key") };
         remove.Click += (_, _) =>
         {
             mixSeeds.Remove(seed);

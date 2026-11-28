@@ -7,6 +7,8 @@ using Mixamp.Core;
 
 namespace Mixamp;
 
+sealed class PlexSignInRequired(string message) : IOException(message);
+
 sealed class Account(Store store, Func<string?>? readLogin = null, Action<string?>? writeLogin = null)
 {
     const string Global = "installation";
@@ -22,11 +24,11 @@ sealed class Account(Store store, Func<string?>? readLogin = null, Action<string
         return id;
     }
 
-    public async Task<(string AccountId, JsonNode[] Servers)> Discover(CancellationToken ct, bool interactive = true)
+    public async Task<(string AccountId, JsonNode[] Servers)> Discover(CancellationToken ct, bool interactive = true,bool freshLogin = false)
     {
         var saved = store.Get(Global, "login");
-        string? token = readLogin?.Invoke();
-        if (readLogin == null && OperatingSystem.IsWindows() && !string.IsNullOrEmpty(saved))
+        string? token = freshLogin ? null : readLogin?.Invoke();
+        if (!freshLogin && readLogin == null && OperatingSystem.IsWindows() && !string.IsNullOrEmpty(saved))
         {
             try
             {
@@ -43,10 +45,11 @@ sealed class Account(Store store, Func<string?>? readLogin = null, Action<string
                 store.Set(Global, "login", "");
             }
         }
+        bool signingIn = token == null;
         using var cloud = new Plex(new Uri("https://plex.tv"), Identifier);
         if (token == null)
         {
-            if (!interactive) throw new IOException("Connect to Plex to resume syncing.");
+            if (!interactive) throw new PlexSignInRequired("Connect to Plex to resume syncing.");
             var pin = await cloud.Call("/api/v2/pins?strong=true", HttpMethod.Post, ct);
             var code = Plex.E(pin.Str("code"));
             var id = Plex.E(pin.Str("id"));
@@ -74,10 +77,15 @@ sealed class Account(Store store, Func<string?>? readLogin = null, Action<string
         using var auth = new Plex(new Uri("https://plex.tv"), Identifier, token);
         try
         {
-            var user = await auth.Call("/api/v2/user", ct: ct);
-            var servers = (JsonArray)
-                await auth.Call("/api/v2/resources?includeHttps=1&includeRelay=1", ct: ct);
-            if (writeLogin != null) writeLogin(token);
+            var userRequest = auth.Call("/api/v2/user", ct: ct);
+            var resourcesRequest = auth.Call("/api/v2/resources?includeHttps=1&includeRelay=1", ct: ct);
+            await Task.WhenAll(userRequest, resourcesRequest);
+            var user = await userRequest;
+            var servers = (JsonArray)await resourcesRequest;
+            if (writeLogin != null)
+            {
+                if (signingIn) writeLogin(token);
+            }
             else if (OperatingSystem.IsWindows()) store.Set(
                 Global,
                 "login",
@@ -101,21 +109,26 @@ sealed class Account(Store store, Func<string?>? readLogin = null, Action<string
             when (ex.StatusCode == System.Net.HttpStatusCode.Unauthorized)
         {
             if (writeLogin == null) store.Set(Global, "login", ""); else writeLogin(null);
-            throw new IOException("Plex revoked this sign-in. Connect again.");
+            throw new PlexSignInRequired("Plex revoked this sign-in. Connect again.");
         }
     }
 
     public async Task<Plex> Connect(JsonNode server, CancellationToken ct)
     {
+        string scope = "server/" + server.Str("clientIdentifier");
+        string? previous = store.Get(scope,"lastEndpoint");
         foreach (
             var c in server
                 .Items("connections")
                 .Where(c => c.Str("protocol") == "https")
                 .OrderBy(c => c["relay"]?.GetValue<bool>() == true)
+                .ThenByDescending(c => string.Equals(c.Str("uri").TrimEnd('/'),previous,StringComparison.OrdinalIgnoreCase))
                 .ThenByDescending(c => c["local"]?.GetValue<bool>() == true)
         )
         {
-            var api = new Plex(new Uri(c.Str("uri")), Identifier, server.Str("accessToken"));
+            if (!Uri.TryCreate(c.Str("uri"), UriKind.Absolute, out var endpoint) ||
+                endpoint.Scheme != Uri.UriSchemeHttps || endpoint.UserInfo.Length != 0) continue;
+            var api = new Plex(endpoint, Identifier, server.Str("accessToken"));
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(4));
             try
@@ -124,13 +137,18 @@ sealed class Account(Store store, Func<string?>? readLogin = null, Action<string
                     (await api.Call("/identity", ct: timeout.Token)).Str("machineIdentifier")
                     == server.Str("clientIdentifier")
                 )
+                {
+                    string origin = endpoint.GetLeftPart(UriPartial.Authority);
+                    if (previous != origin) store.Set(scope,"lastEndpoint",origin);
                     return api;
+                }
             }
-            catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
+            catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or
+                System.Text.Json.JsonException or System.Xml.XmlException or InvalidDataException)
             {
-                ct.ThrowIfCancellationRequested();
             }
             api.Dispose();
+            ct.ThrowIfCancellationRequested();
         }
         throw new IOException("No reachable secure connection matched the selected server.");
     }

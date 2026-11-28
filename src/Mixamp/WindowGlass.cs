@@ -32,7 +32,7 @@ public partial class MainWindow
 
     void EffectsChanged(UISettings sender,object args) => Dispatcher.BeginInvoke(ApplyCaption);
 
-    bool ApplyGlass(nint hwnd)
+    void ApplyGlass(nint hwnd)
     {
         bool enabled=glassOption.IsChecked && !SystemParameters.HighContrast &&
             OperatingSystem.IsWindowsVersionAtLeast(10,0,22621) && effectsSettings?.AdvancedEffectsEnabled==true;
@@ -55,6 +55,6 @@ public partial class MainWindow
         Surface(Rail,Border.BackgroundProperty,"Side",.57);
         Surface(PlayerDeck,Border.BackgroundProperty,"Deck",.65);
         Surface(Menus,Control.BackgroundProperty,"Side",.60);
-        return enabled;
+        Surface(PlayerScreen,Border.BackgroundProperty,theme == "Bitstream 98" ? "Paper" : "Side",.58);
     }
 }

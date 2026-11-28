@@ -27,6 +27,15 @@ public static class ThemeCatalog
         new("Cyanotype", "Prussian blue ink on pale blue paper", new(
             "#DFEDF4", "#CEDFEA", "#F2F8FB", "#E5F0F6", "#123955", "#416074",
             "#005C91", "#B6D7E9", "#91B2C4", "#E2F0F6", "#A9CADC")),
+        new("Dracula", "Pink LEDs on charcoal", new(
+            "#282A36", "#242530", "#282A36", "#30323F", "#F8F8F2", "#C9BEDB",
+            "#FF79C6", "#44475A", "#626580", "#353748", "#242530")),
+        new("Nord", "Frost blue controls on slate", new(
+            "#2E3440", "#282E39", "#2E3440", "#343B49", "#ECEFF4", "#CCD5E1",
+            "#88C0D0", "#3B4252", "#566379", "#3B4252", "#2E3440")),
+        new("Solarized Light", "Warm ivory, dark teal ink and cyan controls", new(
+            "#FDF6E3", "#EEE8D5", "#FFF9E9", "#F5EFDA", "#073642", "#495F65",
+            "#006B70", "#D6E5D9", "#A7B5A9", "#FDF6E3", "#E5DDC5")),
     ];
 
     public static PlayerTheme Resolve(string? saved)

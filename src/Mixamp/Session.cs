@@ -64,11 +64,19 @@ sealed partial class Session : INotifyPropertyChanged
     Library Library =>
         Api == null ? throw new IOException("Connect to a library first.") : new(Api, Scope);
     readonly IPlayback audio;
+    readonly CastSession cast=new();
     CancellationTokenSource connection = new(),
         sync = new(),
         playback = new(),
         search = new();
-    readonly SemaphoreSlim database = new(1);
+    CancellationTokenSource scrolling = new();
+    CancellationTokenSource? playlistRead;
+    PlaylistBrowser? playlistBrowser;
+    string playlistSort="";
+    bool playlistDescending;
+    System.Windows.Data.ListCollectionView? queueView;
+    public System.Collections.IEnumerable DisplayRows => (System.Collections.IEnumerable?)queueView ?? Rows;
+    bool Ranged => Section is "Songs" or "Playlists";
     readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromSeconds(1) };
     DateTime nextReport;
     int generation,
@@ -93,10 +101,31 @@ sealed partial class Session : INotifyPropertyChanged
             Changed();
         }
     }
-    string libraryProgress = "";
+    string libraryProgress = "", rangeProgress = "", refreshProgress = "";
+    bool retryRange,retryRefresh;
+    public bool CanRetryBrowse => Ranged && (retryRange || retryRefresh);
+    void BrowseStatusChanged()
+    {
+        Changed(nameof(LibraryProgress));
+        Changed(nameof(CanRetryBrowse));
+    }
+    void RangeStatus(string text,bool failed=false)
+    {
+        rangeProgress=text;retryRange=failed;BrowseStatusChanged();
+    }
+    void RefreshStatus(string text,bool failed=false)
+    {
+        refreshProgress=text;retryRefresh=failed;BrowseStatusChanged();
+    }
+    public Task RetryBrowse() => retryRange ? Viewport(viewportFirst,viewportLast) : Refresh();
+    static string BrowseFailure(Exception ex) => ex switch {
+        OperationCanceledException or TimeoutException => "Plex timed out.",
+        IOException or HttpRequestException => Message(ex),
+        _ => "Mixamp could not read the track list returned by Plex."
+    };
     public string LibraryProgress
     {
-        get => libraryProgress;
+        get => Ranged && rangeProgress!="" ? rangeProgress : Ranged && refreshProgress!="" ? refreshProgress : libraryProgress;
         private set { libraryProgress = value; Changed(); }
     }
 
@@ -114,7 +143,14 @@ sealed partial class Session : INotifyPropertyChanged
         get => section;
         private set
         {
+            if(section!=value){
+                playlistRead?.Cancel();playlistBrowser=null;
+                search.Cancel();search=new();searchText="";Changed(nameof(SearchText));
+                scrolling.Cancel();
+                RangeStatus("");RefreshStatus("");
+            }
             section = value;
+            BrowseStatusChanged();
             Changed();
             Changed(nameof(ViewTitle));
             Changed(nameof(IsStationQueue));
@@ -149,22 +185,33 @@ sealed partial class Session : INotifyPropertyChanged
         get => audio.EqMode;
         set { audio.EqMode = value; Store.Set("installation", "eq", value); Status = $"EQ · {audio.EqProfile}"; }
     }
-    public bool Playing => audio.Playing;
+    public bool Playing => cast.DeviceName==null ? audio.Playing : cast.Playing;
     public string TransportAction => Playing ? "Pause" : "Play";
-    public bool Descending => descending;
+    public bool Descending => Section=="Playlists" ? playlistDescending : descending;
+    public string SortColumn => Section=="Playlists" ? playlistSort : order;
+
+    public void RestoreSort(IEnumerable<string> columns)
+    {
+        if (Store.Get("installation", "songSort")?.Split('|') is [var column, var direction]
+            && direction is ("asc" or "desc") && columns.Contains(column))
+        {
+            order = column;
+            descending = direction == "desc";
+        }
+    }
     public sealed record PlaylistEntry(string Id, string Name);
     public IReadOnlyList<PlaylistEntry> Playlists { get; private set; } = [];
-    IReadOnlyDictionary<string, Track>? snapshot;
-    public string Now => Current?.Title ?? "Ready to play";
+    public Func<Track,bool> IsRowSelected { get; set; } = _ => false;
+    public string Now => cast.CurrentSong?.Title ?? Current?.Title ?? "Ready to play";
     public System.Windows.Media.Imaging.BitmapImage? Artwork { get; private set; }
-    public string Byline =>
+    public string Byline => cast.CurrentSong is {} remote ? remote.Artist+"   ·   "+remote.Album :
         Current == null
             ? ""
             : Current.ArtistDisplay + "   ·   " + Current.Format.ToUpperInvariant();
     public Track? Current { get; private set; }
-    public string Clock => Current == null ? "0:00" : Cue.Format(audio.Position);
-    public long Position => audio.Position;
-    public bool Seekable => Current?.Duration > 0;
+    public string Clock => Cue.Format(Position);
+    public long Position => cast.DeviceName==null ? audio.Position : (long)(cast.Position*1000);
+    public bool Seekable => cast.DeviceName==null && Current?.Duration > 0;
     Cue activeCue = new();
     bool previewing;
     public long Minimum => Current == null ? 0 : activeCue.Start ?? 0;
@@ -212,6 +259,8 @@ sealed partial class Session : INotifyPropertyChanged
             cmd =>
                 cmd switch
                 {
+                    "Google Cast…" => Api!=null && (Queue.Count>0 || Selected!=null),
+                    "Resume on speaker" or "Pause on speaker" or "Previous on speaker" or "Next on speaker" or "Stop casting" => cast.DeviceName!=null,
                     "Delete tracks from server" => !batchBusy && owned && Api != null && Selected != null,
                     "Undo" or "Redo" => !batchBusy && Api != null,
                     "Rename file" => !batchBusy && Api != null && Selected != null && Selection().Length == 1,
@@ -276,6 +325,8 @@ sealed partial class Session : INotifyPropertyChanged
         };
         timer.Tick += (s, e) =>
         {
+            if(cast.DeviceName!=null){UpdatePlayer();return;}
+            if(!audio.Playing){timer.Stop();UpdatePlayer();return;}
             Changed(nameof(Clock));
             Changed(nameof(ClipClock));
             Changed(nameof(Position));
@@ -289,6 +340,7 @@ sealed partial class Session : INotifyPropertyChanged
 
     public void Seek(long ms)
     {
+        if(cast.DeviceName!=null)return;
         audio.Seek(ms);
         Changed(nameof(Position));
         _ = Report(audio.Playing ? "playing" : "paused");
@@ -328,22 +380,31 @@ sealed partial class Session : INotifyPropertyChanged
         }
     }
 
-    public async Task Cached(bool reconnect = false)
+    SongRows? startupRows;
+    string startupOrder="";
+    bool startupDescending;
+    int viewportFirst,viewportLast;
+    Task? restoring;
+    public Func<bool> PlaylistsExpanded { get; set; } = () => false;
+
+    public async Task Resume()
     {
-        if (Store.Get("installation", "lastScope") is not { } value)
-            return;
-        Scope = JsonSerializer.Deserialize<Scope>(value)!;
-        Caption = Store.Get(Scope.Key, "caption") ?? "Cached library";
-        LibraryProgress = "Loading saved library…";
-        try { await Refresh(); }
-        finally { LibraryProgress = ""; }
-        Status = "Cached library ready.";
-        if (reconnect && Api == null && !connection.IsCancellationRequested)
+        if (Store.Get("installation", "lastScope") is not { } value) return;
+        var saved=JsonSerializer.Deserialize<Scope>(value)!;
+        if (Store.ReadLaunchSongs(saved,order,descending) is { } last)
         {
-            try { await Connect(Scope.Account == "demo" && Scope.Server == "mixamp-demo", Scope); }
-            catch (OperationCanceledException) { }
-            catch (Exception ex) { Status = "Saved library available. " + Message(ex); }
+            var rows = new SongRows();
+            rows.Apply(0,last,0,_ => false);
+            startupRows=rows;
+            startupOrder=order;
+            startupDescending=descending;
+            Show(rows);
+            Status = "Reconnecting to Plex…";
         }
+        try { restoring=Connect(saved.Account=="demo" && saved.Server=="mixamp-demo", saved); await restoring; }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { Status=Message(ex);if(Api==null) LibraryProgress="Reconnect to load tracks."; }
+        finally {restoring=null;}
     }
 
     record QueueState(Track[] Tracks, int Index, string QueueId, bool Repeat, string? StationName = null,bool Sonic=false);
@@ -374,6 +435,7 @@ sealed partial class Session : INotifyPropertyChanged
     async Task Connect(bool demo, Scope? resume = null)
     {
         connection.Cancel();
+        if(resume==null && startupRows!=null){startupRows=null;Show([]);}
         connection = new();
         var ct = connection.Token;
         LibraryProgress = resume == null ? "Connecting to library…" : "Reconnecting to library…";
@@ -433,6 +495,7 @@ sealed partial class Session : INotifyPropertyChanged
                     )
             ];
             ct.ThrowIfCancellationRequested();
+            await cast.Control("stop");
             SaveQueue();
             sync.Cancel();
             search.Cancel();
@@ -450,7 +513,6 @@ sealed partial class Session : INotifyPropertyChanged
             serverName = name;
             owned = owner;
             writable = owner || lib.Str("allowEdit").ToLowerInvariant() is "1" or "true";
-            if (resume == null) snapshot = null;
             Playlists = [];
             Changed(nameof(Playlists));
             Caption = LibraryName + "  /  " + name;
@@ -458,9 +520,8 @@ sealed partial class Session : INotifyPropertyChanged
             Store.Set(Scope.Key, "caption", Caption);
             RestoreQueue();
             Section = "Songs";
-            if (resume == null) await Refresh();
             await Sync();
-            await ReloadPlaylists();
+            if(PlaylistsExpanded())await ReloadPlaylists();
         }
         finally
         {
@@ -473,35 +534,7 @@ sealed partial class Session : INotifyPropertyChanged
     {
         sync.Cancel();
         sync = new();
-        var token = sync.Token;
-        var g = generation;
-        Status = "Syncing music library…";
-        try
-        {
-            LibraryProgress = "Checking library…";
-            bool changed = await Library.Sync(Store,
-                () => token.IsCancellationRequested || snapshot?.Count > 0 ? Task.CompletedTask : Refresh(),
-                token, (count, total, incremental) =>
-                {
-                    if (token.IsCancellationRequested) return;
-                    var action = incremental ? "Checking for changes" : "Loading library";
-                    LibraryProgress = total < 0 ? action + "…" : $"{action} · {count:N0} / {total:N0}";
-                });
-            if (g == generation && !token.IsCancellationRequested)
-            {
-                if (changed) await Refresh();
-                Status = changed ? "Library synced." : "Library is up to date.";
-            }
-        }
-        catch
-        {
-            if (g == generation && sync.Token == token) await Refresh();
-            throw;
-        }
-        finally
-        {
-            if (sync.Token == token) LibraryProgress = "";
-        }
+        await Refresh(sync.Token);
     }
 
     async void ScheduleSearch()
@@ -511,68 +544,140 @@ sealed partial class Session : INotifyPropertyChanged
         var ct = search.Token;
         try
         {
-            await Task.Delay(60, ct);
-            await Refresh(ct, reuse: true);
+            await Task.Delay(180, ct);
+            if(Section=="Up Next")FilterQueue();else await Refresh(ct);
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex)
+        catch (Exception ex) { Status = Message(ex); }
+    }
+
+    Task<SongPage> ReadPage(int offset,CancellationToken ct)
+    {
+        if(Section!="Playlists")return Library.Songs(offset,order,descending,SearchText,ct);
+        var browser=playlistBrowser ?? throw new IOException("Reopen the playlist to continue.");
+        var query=SearchText;var sort=playlistSort;var reverse=playlistDescending;
+        return Task.Run(()=>browser.Read(offset,query,sort,reverse,ct),ct);
+    }
+
+    public async Task Refresh(CancellationToken ct = default)
+    {
+        if (!Ranged || Api==null || Section=="Playlists" && playlistBrowser==null) return;
+        var sectionAtStart=Section;
+        using var request=Section=="Playlists" ? CancellationTokenSource.CreateLinkedTokenSource(ct,playlistRead!.Token) : null;
+        if(request!=null)ct=request.Token;
+        int generation=++readGeneration;
+        scrolling.Cancel();
+        RangeStatus("");
+        RefreshStatus(Section=="Playlists" ? (SearchText.Length==0?"Loading playlist…":"Searching playlist…") : startupRows!=null?"Refreshing library…":"Loading tracks…");
+        var api=Api;
+        var column=order;
+        var reverse=descending;
+        var query=SearchText;
+        SongPage page;
+        try { page=await ReadPage(0,ct); }
+        catch(Exception ex)
         {
-            Status = Message(ex);
+            if (generation==readGeneration && Api==api && Section==sectionAtStart){
+                if(ct.IsCancellationRequested)RefreshStatus("");
+                else RefreshStatus("Couldn’t load tracks. "+BrowseFailure(ex),true);
+            }
+            return;
+        }
+        if (generation!=readGeneration || Api!=api || Section!=sectionAtStart || ct.IsCancellationRequested) return;
+        RefreshStatus("");
+        if (Section=="Songs" && string.IsNullOrWhiteSpace(query)) Store.SaveLaunchSongs(Scope,column,reverse,page);
+        if(Section=="Songs" && startupRows!=null && Rows==startupRows && column==startupOrder && reverse==startupDescending && query=="")
+        {
+            var rows=startupRows;
+            startupRows=null;
+            rows.Apply(0,page,viewportFirst,IsRowSelected);
+            if(viewportLast>=SongPage.Size)await Viewport(viewportFirst,viewportLast);
+        }
+        else
+        {
+            startupRows=null;
+            var rows=new SongRows();
+            rows.Apply(0,page,0,IsRowSelected);
+            Show(rows);
+        }
+        Status=page.Total is int count ? $"{count:N0} tracks" : "Connected to Plex";
+    }
+
+    (SongRows Rows,int First,int Last)? loadingRange;
+    public async Task Viewport(int first,int last)
+    {
+        viewportFirst=first;viewportLast=last;
+        if(Api==null || !Ranged || Rows is not SongRows rows || rows.Count==0)return;
+        first=Math.Clamp(first,0,rows.Count-1);last=Math.Clamp(last,first,rows.Count-1);
+        int start=first-first%SongPage.Size,end=last-last%SongPage.Size;
+        if(loadingRange==(rows,start,end) && !scrolling.IsCancellationRequested)return;
+        scrolling.Cancel();scrolling=new();
+        var ct=scrolling.Token;
+        var seq=readGeneration;
+        loadingRange=(rows,start,end);
+        try
+        {
+            for(int offset=start;offset<=end;offset+=SongPage.Size)
+            {
+                if(rows.HasPage(offset))continue;
+                RangeStatus($"Loading tracks {offset+1:N0}–{Math.Min(offset+SongPage.Size,rows.Count):N0}…");
+                var page=await ReadPage(offset,ct);
+                if(ct.IsCancellationRequested || seq!=readGeneration || !Ranged || rows!=Rows)return;
+                rows.Apply(offset,page,first,IsRowSelected);
+            }
+        }
+        catch(OperationCanceledException) when(ct.IsCancellationRequested) { }
+        catch(Exception ex)
+        {
+            if(!ct.IsCancellationRequested && seq==readGeneration && rows==Rows && Ranged)
+                RangeStatus("Couldn’t load tracks. "+BrowseFailure(ex),true);
+        }
+        finally{
+            if(scrolling.Token==ct){
+                loadingRange=null;
+                if(!retryRange || rows.HasPage(start) && rows.HasPage(end))RangeStatus("");
+            }
         }
     }
 
-    public async Task Refresh(CancellationToken ct = default, bool reuse = false)
+    public Task<Cue> ReadCue(Scope scope,Track track,CancellationToken ct=default)
     {
-        if (!reuse)
-            snapshot = null;
-        if (Section != "Songs")
-            return;
-        int seq = ++readGeneration;
-        var scope = Scope;
-        string term = SearchText,
-            sort = order;
-        var cached = snapshot;
-        bool desc = descending;
-        await database.WaitAsync(ct);
-        List<Track> result;
-        try
+        if(Api==null)
         {
-            if (seq != readGeneration)
-                return;
-            result = await Task.Run(() =>
-            {
-                if (cached == null)
-                {
-                    var all = Store.Search(scope, sort: sort, descending: desc, limit: -1, ct: ct);
-                    cached = all.ToDictionary(t => t.Id);
-                    if (term.Length == 0)
-                        return all;
-                }
-                return Store.Search(scope, term, sort, desc, limit: -1, snapshot: cached, ct: ct);
-            }, ct);
+            var cue=Store.FindCue(scope,track,out bool verify);
+            return Task.FromResult(verify ? new Cue() : cue);
         }
-        finally
-        {
-            database.Release();
-        }
-        if (seq == readGeneration && Section == "Songs" && scope == Scope && !ct.IsCancellationRequested)
-        {
-            snapshot = cached;
-            Show(result);
-        }
+        return new Library(Api,scope).PlaybackCue(Store,track,ct);
     }
 
     void Show(IReadOnlyList<Track> list)
     {
+        queueView?.DetachFromSourceCollection();
         Rows = list;
-        Changed(nameof(Rows));
+        queueView=ReferenceEquals(list,Queue)?new System.Windows.Data.ListCollectionView(Queue):null;
+        FilterQueue();
+        Changed(nameof(Rows));Changed(nameof(DisplayRows));
     }
 
-    public Task Sort(string col)
+    void FilterQueue()
     {
+        if(queueView==null)return;
+        var words=MusicSearch.Words(SearchText);
+        queueView.Filter=words.Length==0 ? null : item=>MusicSearch.Matches((Track)item,words);
+    }
+
+    public async Task Sort(string col)
+    {
+        if(Section=="Playlists"){
+            playlistDescending=col==playlistSort && !playlistDescending;playlistSort=col;
+            await Refresh();return;
+        }
         descending = col == order && !descending;
         order = col;
-        return Refresh(reuse: true);
+        var direction = descending;
+        await Refresh();
+        if (order == col && descending == direction)
+            Store.Set("installation", "songSort", $"{col}|{(direction ? "desc" : "asc")}");
     }
 
     void Stop()
@@ -607,6 +712,7 @@ sealed partial class Session : INotifyPropertyChanged
 
     async Task Start(Track track, bool full = false, Uri? uri = null, Cue? preview = null)
     {
+        if(cast.DeviceName!=null)await cast.Control("stop");
         if (uri == null && Api == null)
             throw new IOException("Connect to the selected Plex library for playback.");
         _ = Report("stopped");
@@ -631,14 +737,14 @@ sealed partial class Session : INotifyPropertyChanged
             full || uri?.IsFile == false
                 ? new Cue()
                 : preview
-                    ?? Store.ReadCue(
+                    ?? await ReadCue(
                         track.LibraryId is { Length: > 0 }
                             ? Scope with
                             {
                                 Library = track.LibraryId,
                             }
                             : Scope,
-                        track
+                        track, ct
                     );
         if (track.Duration > 0)
             cue.Validate(track.Duration);
@@ -691,9 +797,32 @@ sealed partial class Session : INotifyPropertyChanged
 
     public Task Preview(Track t, Cue cue) => Start(t, preview: cue);
 
+    async Task<Track[]> SelectedTracks()
+    {
+        var tracks=Selection();
+        if(Api==null && restoring!=null)await restoring;
+        var rows=Rows;
+        var generation=readGeneration;
+        foreach(var group in tracks.Select((track,i)=>(track,i)).Where(x=>x.track is SongRows.Placeholder)
+            .GroupBy(x=>((SongRows.Placeholder)x.track).Position / SongPage.Size))
+        {
+            var offset=group.Key*SongPage.Size;
+            var page=await ReadPage(offset,search.Token);
+            if(rows!=Rows || generation!=readGeneration)throw new IOException("Select the tracks again in the current view.");
+            foreach(var (track,i) in group)
+            {
+                int local=((SongRows.Placeholder)track).Position-offset;
+                if(local>=page.Tracks.Count)throw new IOException("The library changed. Select the tracks again.");
+                tracks[i]=page.Tracks[local];
+            }
+        }
+        if(Section=="Playlists" && tracks.Any(t=>t.Id==""))throw new IOException("This entry is unavailable.");
+        return tracks;
+    }
+
     async Task PlaySelection(bool full)
     {
-        var selected = Selection();
+        var selected = await SelectedTracks();
         if (selected.Length == 0)
             return;
         if (Section == "Up Next")
@@ -717,6 +846,10 @@ sealed partial class Session : INotifyPropertyChanged
     int SelectedQueueIndex()
     {
         int row = SelectedIndex();
+        if(row>=0 && queueView?.Filter is {} accepts){
+            for(int i=0;i<Queue.Count;i++)if(accepts(Queue[i]) && row--==0)return i;
+            return -1;
+        }
         if (row >= 0 && row < Queue.Count && ReferenceEquals(Queue[row], Selected)) return row;
         return Selected == null ? -1 : Queue.IndexOf(Selected);
     }
@@ -750,13 +883,11 @@ sealed partial class Session : INotifyPropertyChanged
             return;
         }
         int next = index + step;
-        if (next >= Queue.Count && queueId != "" && Queue.Count > 0)
+        if (next >= Queue.Count && !sonicRadio && queueId != "" && Queue.Count > 0)
         {
             var last = Queue[^1].QueueItem;
             var pendingQueue=queueId;
-            var window=sonicRadio
-                ? await Library.ContinueSonic(queueId,last,Queue[^1].Id,Queue.Select(t=>t.Id).ToArray())
-                : await Library.ContinueQueue(queueId,last);
+            var window=await Library.ContinueQueue(queueId,last);
             if(queueId!=pendingQueue || next!=index+step)return;
             var batch = window
                 .Items("Metadata")
@@ -793,8 +924,9 @@ sealed partial class Session : INotifyPropertyChanged
 
     public async Task OpenPlaylist(string id)
     {
-        playlistId = id;
+        playlistId = id;playlistSort="";playlistDescending=false;
         Section = "Playlists";
+        searchText="";Changed(nameof(SearchText));
         Show([]);
         await PlaylistRows();
     }
@@ -812,11 +944,11 @@ sealed partial class Session : INotifyPropertyChanged
 
     async Task PlaylistRows()
     {
-        var id = playlistId;
-        var api = Api;
-        var tracks = (await Library.PlaylistItems(id)).Items("Metadata").Select(Track.Read).ToList();
-        if (Section == "Playlists" && playlistId == id && api == Api)
-            Show(tracks);
+        playlistRead?.Cancel();playlistRead?.Dispose();playlistRead=new();
+        playlistBrowser=new(Library,playlistId);
+        scrolling.Cancel();Show([]);
+        await Refresh();
+
     }
 
     public IReadOnlyList<RadioOption> Stations { get; private set; } = [];
@@ -847,7 +979,7 @@ sealed partial class Session : INotifyPropertyChanged
         Changed(nameof(Stations));
     }
 
-    public Task<List<RadioChoice>> RadioChoices(RadioOption option) => Library.RadioChoices(option, Store);
+    public Task<List<RadioChoice>> RadioChoices(RadioOption option) => Library.RadioChoices(option, null);
 
     int radioPlayRequest;
     public void CancelPendingStation() => ++radioPlayRequest;
@@ -857,7 +989,7 @@ sealed partial class Session : INotifyPropertyChanged
         int request = ++radioPlayRequest;
         int browse = stationRequest;
         string originSection = Section;
-        var q = await Library.StartRadio(option, choices, Store);
+        var q = await Library.StartRadio(option, choices, null);
         if (api != Api || Section != originSection || browse != stationRequest || request != radioPlayRequest) return;
         var entries = q.Items("Metadata").Select(Track.Read).ToList();
         if (entries.Count == 0)
@@ -877,6 +1009,27 @@ sealed partial class Session : INotifyPropertyChanged
     {
         switch (cmd)
         {
+            case "Google Cast…":
+                var castApi=Api ?? throw new IOException("Connect to Plex first.");
+                var castScope=Scope;
+                var tracksToCast=Queue.Count>0 ? Queue.Skip(Math.Max(index,0)).ToArray() : await SelectedTracks();
+                Status="Looking for Google Cast devices…";
+                var speakers=await cast.Discover();
+                if(speakers.Count==0)throw new IOException("No Google Cast devices found. Mixamp can’t cast to Echo speakers over Wi-Fi.");
+                var chosen=speakers[Dialogs.Choose("Play on Google Cast",speakers.Select(s=>s.Name).ToArray())];
+                if(Api!=castApi || Scope!=castScope)throw new IOException("The library changed. Choose the speaker again.");
+                Status="Connecting to speaker…";
+                var handoffPosition=Current?.Id==tracksToCast.FirstOrDefault()?.Id ? Position/1000.0 : 0;
+                await Task.Run(()=>cast.Start(chosen.Id,castApi,castScope,tracksToCast.Select(CastSong.From).ToArray(),handoffPosition));
+                if(audio.Playing)audio.Toggle();
+                UpdatePlayer();timer.Start();
+                Status="Playing on "+chosen.Name;
+                break;
+            case "Resume on speaker": await cast.Control("play");break;
+            case "Pause on speaker": await cast.Control("pause");break;
+            case "Previous on speaker": await cast.Control("previous");break;
+            case "Next on speaker": await cast.Control("next");break;
+            case "Stop casting": await cast.Control("stop");timer.Stop();UpdatePlayer();Status="Casting stopped";break;
             case "Connect":
             case "Demo":
                 await Connect(cmd == "Demo");
@@ -890,13 +1043,13 @@ sealed partial class Session : INotifyPropertyChanged
                 break;
             case "Songs":
                 Section = "Songs";
-                await Refresh(reuse: true);
+                await Refresh();
                 break;
             case "New playlist":
             case "Add to playlist":
                 var library = Library;
                 var api = Api;
-                var tracks = Selection();
+                var tracks = await SelectedTracks();
                 if (tracks.Length == 0 && cmd != "New playlist")
                     return;
                 string? dest = null,
@@ -935,14 +1088,21 @@ sealed partial class Session : INotifyPropertyChanged
                     throw new IOException("Select a playlist entry.");
                 if (cmd == "Move up")
                 {
-                    int i = Rows.ToList().IndexOf(Selected);
+                    if(playlistSort!="" || !string.IsNullOrWhiteSpace(SearchText))
+                        throw new IOException("Reopen the playlist in its original order to move an entry.");
+                    var selected=Selected;var view=playlistBrowser;var id=playlistId;
+                    int i = SelectedIndex();
                     if (i < 1)
                         return;
-                    await Library.Move(
-                        playlistId,
-                        Selected.PlaylistItem,
-                        i == 1 ? "0" : Rows[i - 2].PlaylistItem
-                    );
+                    string after="0";
+                    if(i>1){
+                        int start=(i-2)/SongPage.Size*SongPage.Size;
+                        var page=await ReadPage(start,playlistRead!.Token);
+                        if(view!=playlistBrowser || page.Tracks.Count<=i-2-start)return;
+                        after=page.Tracks[i-2-start].PlaylistItem;
+                        if(after=="")throw new IOException("The previous playlist entry is unavailable.");
+                    }
+                    await Library.Move(id,selected.PlaylistItem,after);
                 }
                 else
                     await Library.Remove(playlistId, Selected.PlaylistItem);
@@ -1009,6 +1169,7 @@ sealed partial class Session : INotifyPropertyChanged
                 await PlaySelection(cmd != "Play");
                 break;
             case "Toggle":
+                if(cast.DeviceName!=null){await cast.Control("toggle");break;}
                 if (Current == null && Selected == null && Queue.Count > 0)
                 {
                     index = Math.Clamp(index, 0, Queue.Count-1);
@@ -1024,12 +1185,13 @@ sealed partial class Session : INotifyPropertyChanged
             case "Next":
             case "Ended":
             case "Previous":
+                if(cast.DeviceName!=null){if(cmd!="Ended")await cast.Control(cmd=="Previous"?"previous":"next");break;}
                 await Advance(cmd == "Previous" ? -1 : 1, cmd == "Ended");
                 break;
             case "Add to Queue":
             case "Play Next":
                 int at = cmd == "Play Next" ? Math.Clamp(index + 1, 0, Queue.Count) : Queue.Count;
-                foreach (var t in Selection())
+                foreach (var t in await SelectedTracks())
                     Queue.Insert(at++, t);
                 break;
             case "Remove from queue":
@@ -1044,7 +1206,9 @@ sealed partial class Session : INotifyPropertyChanged
                 }
                 break;
             case "Library Shuffle":
-                var sample = await Task.Run(() => Store.Sample(Scope));
+                var shuffled=await (Api ?? throw new IOException("Connect to Plex first.")).Call(
+                    $"/library/sections/{Plex.E(Scope.Library)}/all?type=10&sort=random&X-Plex-Container-Size=100");
+                var sample=shuffled.Items("Metadata").Take(100).Select(Track.Read).ToList();
                 if (sample.Count == 0)
                     return;
                 Queue.Clear();
@@ -1056,13 +1220,15 @@ sealed partial class Session : INotifyPropertyChanged
                 await Start(Queue[0]);
                 break;
             case "Sonically similar radio":
-                var seed = Selection().Single();
+                var seed = (await SelectedTracks()).Single();
                 await PlayRadio(new("sonic", "", seed.Title + " Radio"), [seed.Id]);
                 break;
             case "Edit…":
                 var metadataApi = Api!;
                 var metadataScope = Scope;
-                var metadata = await TrackMetadata.Open(metadataApi,metadataScope,Selection().Select(t=>t.Id));
+                var editIds = (await SelectedTracks()).Select(t => t.Id).Distinct().ToArray();
+                if (!MetadataWindow.ConfirmSelection(editIds.Length)) break;
+                var metadata = await TrackMetadata.Open(metadataApi, metadataScope, editIds);
                 if (Api != metadataApi || Scope != metadataScope) break;
                 var changes = MetadataWindow.Edit(metadata, this);
                 if (changes != null)
@@ -1072,13 +1238,13 @@ sealed partial class Session : INotifyPropertyChanged
                 }
                 break;
             case "Song Info":
-                var sel = Selection();
+                var sel = (await SelectedTracks()).DistinctBy(t => t.Id).ToArray();
                 if (sel.Any(t => t.LibraryId is { Length: > 0 } && t.LibraryId != Scope.Library))
                     throw new IOException(
                         "Connect to the track’s music library to edit this entry."
                     );
-                if (sel.Length > 0)
-                    new Editor(this, sel).ShowDialog();
+                if (MetadataWindow.ConfirmSelection(sel.Length))
+                    new Editor(this, sel, await ReadCue(Scope,sel[0])).ShowDialog();
                 break;
             case "Delete tracks from server":
             case "Rename file":
@@ -1116,7 +1282,10 @@ sealed partial class Session : INotifyPropertyChanged
 
     public void Dispose()
     {
+        playlistRead?.Cancel();
+        Task.Run(()=>cast.Control("stop")).GetAwaiter().GetResult();
         SaveQueue();
+        scrolling.Cancel();
         sync.Cancel();
         connection.Cancel();
         search.Cancel();

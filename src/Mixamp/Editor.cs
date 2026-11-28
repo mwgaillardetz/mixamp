@@ -11,7 +11,7 @@ sealed class Editor : Window
         ItemsSource = new[] { "Plex library", "Audio files", "Both" },
         SelectedIndex = 0,
     };
-    readonly List<(string Tag, string? Plex, ComboBox Mode, TextBox Value)> fields = [];
+    readonly List<(string Tag, string? Plex, string Initial, TextBox Value)> fields = [];
     readonly CheckBox start = new() { Content = "Start" },
         stop = new() { Content = "Stop" };
     readonly TextBox from = new(),
@@ -23,7 +23,7 @@ sealed class Editor : Window
     readonly HashSet<string> completed = [];
     bool saving;
 
-    public Editor(Session vm, Track[] tracks,bool fileTags=false)
+    public Editor(Session vm, Track[] tracks,Cue cue,bool fileTags=false)
     {
         System.Windows.Automation.AutomationProperties.SetName(from, "Start time");
         System.Windows.Automation.AutomationProperties.SetName(until, "Stop time");
@@ -85,7 +85,6 @@ sealed class Editor : Window
             }
         );
         var t = tracks[0];
-        var cue = vm.Store.ReadCue(vm.Scope, t);
         start.IsChecked = cue.Start.HasValue;
         stop.IsChecked = cue.End.HasValue;
         SetTime(from, cue.Start ?? 0);
@@ -226,40 +225,24 @@ sealed class Editor : Window
     {
         var values = tracks.Select(read).Distinct().ToArray();
         var row = new DockPanel { Margin = new Thickness(0, 3, 0, 3) };
-        var mode = new ComboBox
-        {
-            ItemsSource = new[] { "Leave as is", "Set", "Clear" },
-            SelectedIndex = 0,
-            Width = 95,
-        };
         var box = new TextBox
         {
             Text = values.Length == 1 ? values[0] : "",
             ToolTip = values.Length > 1 ? "Mixed values" : label,
         };
         System.Windows.Automation.AutomationProperties.SetName(box, label);
-        System.Windows.Automation.AutomationProperties.SetName(mode, label + " change");
         var caption = new Label
         {
-            Content = label,
+            Content = values.Length > 1 ? label + " (mixed)" : label,
             Target = box,
-            Width = 105,
+            Width = 150,
         };
         if (values.Length > 1)
             caption.ToolTip = "Mixed values";
         row.Children.Add(caption);
-        row.Children.Add(mode);
         row.Children.Add(box);
         page.Children.Add(row);
-        box.TextChanged += (s, e) =>
-        {
-            if (box.IsEnabled)
-                mode.SelectedIndex = 1;
-        };
-        fields.Add((tag, plex, mode, box));
-        if (values.Length > 1)
-            box.Text = "— Mixed —";
-        mode.SelectedIndex = 0;
+        fields.Add((tag, plex, box.Text, box));
     }
 
     void Capabilities()
@@ -272,13 +255,8 @@ sealed class Editor : Window
             bool allowed =
                 (target.SelectedIndex == 1 || vm.CanWrite && f.Plex != null)
                 && (target.SelectedIndex == 0 || file);
-            f.Mode.IsEnabled = f.Value.IsEnabled = allowed;
-            if (!allowed)
-            {
-                f.Mode.SelectedIndex = 0;
-                f.Mode.ToolTip =
-                    "Requires a supported Plex field and permission, or a mapped single-part MP3, FLAC or M4A for file writes.";
-            }
+            f.Value.IsEnabled = allowed;
+            if (!allowed) f.Value.Text = f.Initial;
         }
     }
 
@@ -350,43 +328,30 @@ sealed class Editor : Window
                 var cue = Read();
                 var track = tracks.Single();
                 cue.Validate(track.Duration);
-                var before = vm.Store.ReadCue(vm.Scope, track);
+                var before = await vm.ReadCue(vm.Scope, track);
                 if (cue != before) vm.Store.Remember(vm.Scope, batch, "Edit playback range",
                     new(track, "Cue", "", "", System.Text.Json.JsonSerializer.Serialize(before), System.Text.Json.JsonSerializer.Serialize(cue)));
                 vm.Store.SaveCue(vm.Scope, track, cue);
                 result.Text = "Playback range saved. Applies in Mixamp.";
                 return;
             }
-            var edits = fields.Where(f => f.Mode.SelectedIndex > 0).ToList();
+            var edits = fields.Where(f => f.Value.IsEnabled && f.Value.Text != f.Initial).ToList();
             if (edits.Count == 0)
             {
                 result.Text = "No fields changed.";
                 return;
             }
-            string Value((string Tag, string? Plex, ComboBox Mode, TextBox Value) f) =>
-                f.Mode.SelectedIndex == 2 ? "" : f.Value.Text;
-            if (
-                edits.Any(f =>
-                    f.Mode.SelectedIndex == 1 && (Value(f) == "" || Value(f) == "— Mixed —")
-                )
-            )
-                throw new IOException("Enter a value or choose Clear.");
-            if (
-                edits.Any(f =>
-                    f.Mode.SelectedIndex == 1
-                    && f.Plex == "index"
-                    && (!int.TryParse(Value(f), out var n) || n < 0)
-                )
-            )
+            if (edits.Any(f => f.Tag == "TRACKNUMBER" && f.Value.Text != "" &&
+                (!int.TryParse(f.Value.Text, out var n) || n < 0)))
                 throw new IOException("Enter a nonnegative track number.");
             if (target.SelectedIndex != 1 && edits.Any(f => f.Plex == "albumRelation"))
             {
-                await AlbumArtist(Value(edits.Single(f => f.Plex == "albumRelation")));
+                await AlbumArtist(edits.Single(f => f.Plex == "albumRelation").Value.Text);
                 outcomes.Add("Plex album grouping verified.");
             }
             foreach (var t in tracks)
             {
-                var files = edits.ToDictionary(f => f.Tag, Value);
+                var files = edits.ToDictionary(f => f.Tag, f => f.Value.Text);
                 string key = t.Id + System.Text.Json.JsonSerializer.Serialize(files);
                 if (target.SelectedIndex != 0 && !completed.Contains("f" + key))
                 {
@@ -398,7 +363,7 @@ sealed class Editor : Window
                 {
                     var plex = edits
                         .Where(f => f.Plex is not null and not "albumRelation")
-                        .ToDictionary(f => f.Plex!, Value);
+                        .ToDictionary(f => f.Plex!, f => f.Value.Text);
                     if (plex.Count > 0)
                     {
                         var before = await vm.Api!.Fresh(t.Id);

@@ -18,7 +18,7 @@ public partial class MainWindow
             }
             else
             {
-                await vm.Cached();
+                await vm.Resume();
                 await Dispatcher.InvokeAsync(
                     () => { },
                     System.Windows.Threading.DispatcherPriority.ApplicationIdle
@@ -292,7 +292,7 @@ public partial class MainWindow
             if (path.Visibility != Visibility.Visible)
                 throw new IOException("File path column did not appear.");
             await vm.Sort(nameof(Track.FilePath));
-            if (!vm.Rows.Select(t => t.FilePath).SequenceEqual(vm.Rows.Select(t => t.FilePath)
+            if (!vm.Rows.Where(t=>t.Id!="").Select(t => t.FilePath).SequenceEqual(vm.Rows.Where(t=>t.Id!="").Select(t => t.FilePath)
                     .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)))
                 throw new IOException("Library file path ordering failed.");
             toggle.IsChecked = false;
@@ -333,7 +333,7 @@ public partial class MainWindow
                     throw new IOException("Theme lost the selected track.");
                 if(Math.Abs(SpectrumColumn.ActualWidth-PlayerContent.ActualWidth/2)>1 ||
                     TrackDisplay.TranslatePoint(new Point(TrackDisplay.ActualWidth,0),PlayerContent).X >
-                    NowBars.TranslatePoint(new Point(),PlayerContent).X+1)
+                    SpectrumColumn.Offset+1)
                     throw new IOException("Now Playing text overlaps the spectrum.");
                 await CheckMenuTheme(libraryMenu);
                 var visual = (FrameworkElement)Content;

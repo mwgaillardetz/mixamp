@@ -8,7 +8,17 @@ The Linux tests use the production catalog, cue store, Plex HTTP adapter, album 
 
 The published Windows executable also ran under Wine 10.0 with Xvfb. The fixture smoke path starts the normal main window, connects to the authenticated demo, syncs the catalog, selects a row, queues it and switches through all five themes. It opens Song Info through the application command, checks the start and stop boxes, enters 0:42 and 4:08, operates Save, edits a title and rereads the mock server. The screenshots are renders from this executable. Wine required disabling its incomplete Windows.Storage.ApplicationData activation and registering local substitute fonts in an isolated prefix. Some East Asian characters display as missing glyphs in this configuration. Native Windows rendering and audio still require verification.
 
-## Performance on the available host
+## On-demand library and Mac playback
+
+The Apple Silicon package was exercised in its native WebKit window against a disposable 31,000-track Plex fixture. Sorting by title descending showed the correct first and last tracks. Dragging straight to the end requested offset 30,976. Searching from there queried the whole section. Plex exposes the collection total alongside ranges, allowing the scrollbar to span the library. [Plex Media Server API](https://developer.plex.tv/pms/)
+
+A warm launch displayed the saved library rows within 0.82 seconds in one instrumented run. The fixture delayed reconnection by two seconds and the live Songs request by five seconds. A double-click during reconnect started playback before the live refresh finished. At 3.18 seconds after launch, the playback clock read 0.22 seconds. These are local fixture observations, not live-server timings. Deferring network work until after the first display follows Apple's launch guidance. [Reducing your app’s launch time](https://developer.apple.com/documentation/xcode/reducing-your-app-s-launch-time)
+
+The launch snapshot measured 64,398 bytes in this fixture. A single SQLite row holds the last unfiltered opening range, sort, library identity and total, with a 256 KiB payload limit. Replacing that row atomically keeps a partial update from corrupting the previous view. Browsing other ranges does not add disk entries. [SQLite atomic commit](https://www.sqlite.org/atomiccommit.html)
+
+The packaged player also switched away from a delayed track and played the next selection. With byte ranges disabled, WebKit's requests shared a single upstream transfer for the active track. Files that require the end of the stream to identify or decode can still take longer on those servers.
+
+## Historical full-catalog performance on the available host
 
 The packaged WPF benchmark ran on Ubuntu 26.04.1, Wine 10.0 and Xvfb, with an Intel Xeon E5-2650 v3, 40 logical CPUs and about 374 GiB of RAM. The disposable profile was on tmpfs. Wine reported an emulated Windows build 19043. The raw report identifies the measured Release client DLL by SHA-256. Subsequent changes added cloneable media readers, a range read deadline and stronger track/library identity checks. [Raw timings and hardware](wine-benchmark.json)
 
@@ -47,9 +57,9 @@ File saves read and hash the selected Plex part before replacing its mapped coun
 
 - Plex discovery selects HTTPS connections, including secure relay. Playback requires one unambiguous media part. HLS negotiation, native codecs and output timing have only been compiled against the Windows SDK here.
 - Cues identify a recording using its Plex GUID, duration, part paths and byte sizes. An ID change can reuse a range on one matching catalog identity. Ambiguous matches need manual cue entry. A replacement that preserves every identity attribute can evade detection.
-- A custom cue is local to Mixamp. Queue state is saved on a clean close or server switch. Startup opens the last cached library. Reconnect before streaming.
+- A custom cue is local to Mixamp. Queue state is saved on a clean close or server switch. Startup reconnects to the saved library and requests the first visible tracks.
 - For metadata, unsupported server field scopes are disabled. Fields displayed by Plex may differ from the embedded file, particularly with locked fields or a different library metadata preference. The refresh operation is asynchronous on the server.
-- The column selectors show up to 256 choices per level. Songs and album/artist drill-downs page from SQLite. Large Plex playlists currently use the returned server window. Thumbnails are fetched only for the current playback item. There is no persistent artwork cache.
+- The column selectors show up to 256 choices per level. Songs requests visible ranges from Plex. Album and artist mix choices come from the selected server. Playlist reads follow Plex’s reported ranges and preserve duplicate entries in order. Thumbnails are fetched only for the current playback item. There is no persistent artwork cache.
 - The Studio inspector opens the shared editor. Real audio level meters are omitted. The Wine captures exercise selection and layout changes. Full keyboard, high-contrast and focus/scroll continuity at different native scale factors remain open.
 - The Windows CI workflow and optional Windows SMB fixture are supplied in source. The workspace started without a Git remote. No hosted CI run, clean Windows installation, live Plex mutation or real SMB save was available to certify.
 

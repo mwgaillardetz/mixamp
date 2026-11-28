@@ -7,14 +7,16 @@ namespace Mixamp;
 
 public sealed class Visualizer : FrameworkElement
 {
-    readonly float[] peaks = new float[96];
+    readonly float[] peaks = new float[48];
     readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(50) };
     MMDevice? device;
     AudioSessionControl? session;
     DateTime nextLookup;
     PlaybackSpectrum? spectrum;
-    readonly float[] bands = new float[32];
+    readonly float[] bands = new float[PlaybackSpectrum.BandCount];
     int head;
+    public string Backdrop { get; set; } = VisualizerStyles.Off;
+    public bool ShowMeter { get; set; } = true;
     public bool BottomAligned { get; set; }
 
     public Visualizer()
@@ -112,21 +114,54 @@ public sealed class Visualizer : FrameworkElement
 
     protected override void OnRender(DrawingContext dc)
     {
-        if (BottomAligned && !timer.IsEnabled) return;
+        if (!timer.IsEnabled || ActualWidth <= 0 || ActualHeight <= 0) return;
         var ink = (Brush)FindResource("Accent");
-        int count = BottomAligned ? bands.Length : peaks.Length;
-        double step = ActualWidth / count;
-        for (int i = 0; i < count; i++)
+        if (BottomAligned && Backdrop != VisualizerStyles.Off && !SystemParameters.HighContrast)
         {
-            if (BottomAligned)
+            dc.PushOpacity(.18);
+            DrawBands(dc, ink, new Rect(RenderSize), Backdrop);
+            dc.Pop();
+        }
+        if (!ShowMeter) return;
+        double left = BottomAligned ? ActualWidth / 2 + 8 : 0;
+        double height = BottomAligned ? Math.Min(26, ActualHeight) : ActualHeight;
+        if (left >= ActualWidth) return;
+        DrawBands(dc, ink, new Rect(left, (ActualHeight - height) / 2, ActualWidth - left, height),
+            BottomAligned ? VisualizerStyles.Pixels : VisualizerStyles.Mirror);
+    }
+
+    void DrawBands(DrawingContext dc, Brush ink, Rect bounds, string style)
+    {
+        const int levels = 8;
+        bool mirror = style == VisualizerStyles.Mirror;
+        bool dots = style == VisualizerStyles.Dots;
+        int count = BottomAligned ? bands.Length : peaks.Length;
+        double slot = bounds.Width / count;
+        double step = bounds.Height / (mirror ? levels * 2 : levels);
+        for (int level = 0; level < levels; level++)
+        {
+            dc.PushOpacity(.54 + .42 * (level + 1) / levels);
+            double y = (mirror ? bounds.Top + bounds.Height / 2 : bounds.Bottom) - (level + 1) * step;
+            for (int i = 0; i < count; i++)
             {
-                double bar = ActualHeight * bands[i];
-                dc.DrawRectangle(ink, null, new Rect(i * step, ActualHeight - bar, Math.Min(1.5, step), bar));
-                continue;
+                double amplitude = BottomAligned ? bands[i] : Math.Sqrt(peaks[(head + i) % count]);
+                if (Math.Round(amplitude * levels) <= level) continue;
+                double x = bounds.Left + i * slot;
+                if (dots)
+                {
+                    double radius = Math.Min(slot, step) * .35;
+                    dc.DrawEllipse(ink, null, new Point(x + slot / 2, y + step / 2), radius, radius);
+                    continue;
+                }
+                var block = new Rect(x, y, slot * .78, step * .8);
+                dc.DrawRectangle(ink, null, block);
+                if (mirror)
+                {
+                    block.Y = bounds.Top + bounds.Bottom - block.Bottom;
+                    dc.DrawRectangle(ink, null, block);
+                }
             }
-            double height = Math.Max(2, ActualHeight * Math.Sqrt(peaks[(head + i) % peaks.Length]));
-            dc.DrawRoundedRectangle(ink, null, new Rect(i * step, (ActualHeight - height) / 2,
-                Math.Max(1, step - 2), height), 2, 2);
+            dc.Pop();
         }
     }
 }

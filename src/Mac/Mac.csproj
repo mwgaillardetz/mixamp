@@ -14,4 +14,4 @@
     <Content Include="../Assets/Ubuntu/*.ttf" Link="wwwroot/fonts/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../docs/mixtape.png" Link="wwwroot/mixtape.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
-</Project>
+<ItemGroup><Compile Include="../Casting/*.cs" Link="Casting/%(Filename)%(Extension)" /><PackageReference Include="Sharpcaster" Version="3.0.0" /></ItemGroup></Project>

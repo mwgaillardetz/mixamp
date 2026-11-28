@@ -1,6 +1,8 @@
 """Build self-contained macOS application bundles from any .NET SDK host."""
+import argparse
 import os
 import plistlib
+import re
 import shutil
 import stat
 import subprocess
@@ -12,8 +14,25 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 version = ElementTree.parse(root / "Directory.Build.props").findtext("./PropertyGroup/Version")
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--local", action="store_true", help="Sign a local build with Apple Development and write it under artifacts/local")
+parser.add_argument("architectures", nargs="*", metavar="RID")
+args = parser.parse_args()
 out = root / "artifacts"
-out.mkdir(exist_ok=True)
+identity = os.environ.get("MIXAMP_SIGN_IDENTITY", "-")
+if args.local:
+    if sys.platform != "darwin":
+        parser.error("--local requires macOS and a code-signing identity")
+    out = out / "local"
+    if "MIXAMP_SIGN_IDENTITY" not in os.environ:
+        identities = subprocess.check_output(["security", "find-identity", "-v", "-p", "codesigning"], text=True)
+        candidates = re.findall(r'^\s*\d+\) ([0-9A-Fa-f]{40}) "Apple Development:', identities, re.MULTILINE)
+        if len(candidates) != 1:
+            parser.error("Set MIXAMP_SIGN_IDENTITY to the local signing identity to use")
+        identity = candidates[0]
+    if not identity.strip() or identity == "-":
+        parser.error("--local requires a signing certificate for continuity between builds")
+out.mkdir(parents=True, exist_ok=True)
 dotnet = os.environ.get("DOTNET_EXE", "dotnet")
 signer = os.environ.get("RCODESIGN") or shutil.which("rcodesign")
 
@@ -38,7 +57,8 @@ def build(rid):
                 CFBundleVersion=version,CFBundleShortVersionString=version,NSHighResolutionCapable=True,
                 NSPrincipalClass="NSApplication",LSMinimumSystemVersion="14.0",
                 NSAppTransportSecurity={"NSExceptionDomains":{"127.0.0.1":{"NSExceptionAllowsInsecureHTTPLoads":True}}},
-                NSLocalNetworkUsageDescription="Mixamp connects to your Plex Media Server to load and play your music."), f)
+                NSBonjourServices=["_googlecast._tcp"],
+                NSLocalNetworkUsageDescription="Mixamp connects to your Plex server and finds speakers when you choose Google Cast."), f)
         shutil.copytree(root/"notices", resources/"notices")
         shutil.copy2(root/"THIRD-PARTY-NOTICES.md",resources)
         (payload/"Mixamp").unlink()
@@ -49,8 +69,8 @@ def build(rid):
         if diagnostic.exists(): diagnostic.unlink()
         if sys.platform == "darwin":
             for p in payload.glob("*.dylib"):
-                subprocess.run(["codesign","--force","--sign","-",str(p)],check=True)
-            subprocess.run(["codesign","--force","--sign","-",str(app)],check=True)
+                subprocess.run(["codesign","--force","--sign",identity,str(p)],check=True)
+            subprocess.run(["codesign","--force","--sign",identity,str(app)],check=True)
             subprocess.run(["codesign","--verify","--deep","--strict",str(app)],check=True)
         elif signer:
             for p in payload.glob("*.dylib"):
@@ -70,6 +90,6 @@ def build(rid):
         target.with_suffix(".tmp").replace(target)
         print(target)
 
-for architecture in sys.argv[1:] or ["osx-arm64","osx-x64"]:
+for architecture in args.architectures or ["osx-arm64","osx-x64"]:
     if architecture not in ("osx-arm64","osx-x64"): raise ValueError(architecture)
     build(architecture)

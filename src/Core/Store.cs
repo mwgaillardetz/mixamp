@@ -9,11 +9,22 @@ public sealed class Store
     readonly string catalog,
         settings;
 
-    public Store(string directory)
+    public Store(string directory, bool useCatalog = true)
     {
         Directory.CreateDirectory(directory);
         catalog = Path.Combine(directory, "catalog.db");
         settings = Path.Combine(directory, "preferences.db");
+        if (useCatalog) InitializeCatalog();
+        using var prefs = Open(settings);
+        Sql(
+                prefs,
+                "CREATE TABLE IF NOT EXISTS prefs(scope TEXT,k TEXT,v TEXT, PRIMARY KEY(scope,k)); CREATE TABLE IF NOT EXISTS undo(id INTEGER PRIMARY KEY,scope TEXT,batch TEXT,name TEXT,data TEXT); CREATE INDEX IF NOT EXISTS undo_scope ON undo(scope,id); CREATE TABLE IF NOT EXISTS redo(id INTEGER PRIMARY KEY,scope TEXT,batch TEXT,name TEXT,data TEXT); CREATE INDEX IF NOT EXISTS redo_scope ON redo(scope,id);"
+            )
+            .ExecuteNonQuery();
+    }
+
+    void InitializeCatalog()
+    {
         using var db = Open(catalog);
         Sql(
                 db,
@@ -41,12 +52,6 @@ public sealed class Store
                     $"CREATE INDEX IF NOT EXISTS idx_{id} ON tracks(scope,json_extract(data,'$.{id}'))"
                 )
                 .ExecuteNonQuery();
-        using var prefs = Open(settings);
-        Sql(
-                prefs,
-                "CREATE TABLE IF NOT EXISTS prefs(scope TEXT,k TEXT,v TEXT, PRIMARY KEY(scope,k)); CREATE TABLE IF NOT EXISTS undo(id INTEGER PRIMARY KEY,scope TEXT,batch TEXT,name TEXT,data TEXT); CREATE INDEX IF NOT EXISTS undo_scope ON undo(scope,id); CREATE TABLE IF NOT EXISTS redo(id INTEGER PRIMARY KEY,scope TEXT,batch TEXT,name TEXT,data TEXT); CREATE INDEX IF NOT EXISTS redo_scope ON redo(scope,id);"
-            )
-            .ExecuteNonQuery();
     }
 
     static readonly Dictionary<string, string> Columns = new()
@@ -361,6 +366,11 @@ public sealed class Store
             while (reader.Read()) group.Enqueue(reader.GetString(0));
             if (group.Count > 0) groups.Add(group);
         }
+        return InterleaveMix(groups);
+    }
+
+    internal static List<string> InterleaveMix(List<Queue<string>> groups)
+    {
         Random.Shared.Shuffle(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(groups));
         List<string> result = [];
         while (result.Count < 100 && groups.Count > 0)
@@ -444,8 +454,45 @@ public sealed class Store
             .ExecuteNonQuery();
     }
 
-    public Cue ReadCue(Scope s, Track t)
+    // One replaceable row across all libraries and sorts. No tracks accumulate as the user scrolls.
+    sealed record LaunchSongs(Scope Scope, string Column, bool Descending, SongPage Page);
+    const int LaunchLimit = 256 * 1024;
+
+    public SongPage? ReadLaunchSongs(Scope scope, string column, bool descending)
     {
+        try
+        {
+            var json = Get("installation", "launchSongs");
+            if (string.IsNullOrEmpty(json) || json.Length > LaunchLimit) return null;
+            var saved = JsonSerializer.Deserialize<LaunchSongs>(json);
+            return saved?.Scope == scope && saved.Descending == descending &&
+                string.Equals(saved.Column, column, StringComparison.OrdinalIgnoreCase) &&
+                saved.Page?.Tracks is { Count: <= SongPage.Size } tracks &&
+                !(saved.Page.Total < tracks.Count) ? saved.Page : null;
+        }
+        catch (Exception ex) when (ex is JsonException or SqliteException) { return null; }
+    }
+
+    public void SaveLaunchSongs(Scope scope, string column, bool descending, SongPage page)
+    {
+        if (page.Tracks.Count > SongPage.Size) return;
+        var json = JsonSerializer.Serialize(new LaunchSongs(scope,column,descending,page));
+        if (System.Text.Encoding.UTF8.GetByteCount(json) > LaunchLimit) json = "";
+        try
+        {
+            using var db = Open(settings);
+            using var update = Sql(db, """
+                INSERT INTO prefs(scope,k,v) VALUES('installation','launchSongs',$json)
+                ON CONFLICT(scope,k) DO UPDATE SET v=excluded.v WHERE v<>excluded.v
+                """, ("$json",json));
+            update.ExecuteNonQuery();
+        }
+        catch (SqliteException) { /* Live browsing also works when the optional snapshot cannot be saved. */ }
+    }
+
+    public Cue FindCue(Scope s, Track t, out bool verifyIdentity)
+    {
+        verifyIdentity = false;
         string key = "cue/" + t.Id + "/" + t.Identity;
         if (Get(s.Key, key) is { } value)
             return JsonSerializer.Deserialize<Cue>(value)!;
@@ -464,6 +511,14 @@ public sealed class Store
         string previous = r.GetString(0);
         if (r.Read())
             return new();
+        verifyIdentity = true;
+        return JsonSerializer.Deserialize<Cue>(previous)!;
+    }
+
+    public Cue ReadCue(Scope s, Track t)
+    {
+        var cue = FindCue(s,t,out bool verifyIdentity);
+        if (!verifyIdentity) return cue;
         using var db = Open(catalog);
         using var items = Sql(
             db,
@@ -484,7 +539,7 @@ public sealed class Store
         }
         if (count != 1 || !current)
             return new();
-        return JsonSerializer.Deserialize<Cue>(previous)!;
+        return cue;
     }
 
     public void SaveCue(Scope s, Track t, Cue cue)

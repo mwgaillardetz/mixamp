@@ -72,9 +72,11 @@ def handler(lib):
         def log_message(self, *_):
             pass
 
-        def respond(self, code, data=None):
+        def respond(self, code, data=None, headers=None):
             payload = json.dumps({"MediaContainer": data or {}}).encode()
             self.send_response(code)
+            for key,value in (headers or {}).items():
+                self.send_header(key,str(value))
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
@@ -144,13 +146,33 @@ def handler(lib):
                     return self.respond(200)
                 if kind in ("8", "9"):
                     groups = [("v", "Various Artists"), ("g", "The Session Band")] if kind == "8" else [("a", "Room Tapes"), ("b", "Studio B")]
-                    return self.respond(200, dict(Metadata=[dict(ratingKey=k, title=t) for k, t in groups if not q.get("title") or q["title"] == t]))
+                    rows = [dict(ratingKey=k, title=t) for k,t in groups if not q.get("title") or q["title"] == t]
+                    start, size = int(q.get("X-Plex-Container-Start",0)), int(q.get("X-Plex-Container-Size",256))
+                    return self.respond(200,dict(offset=start,totalSize=len(rows),Metadata=rows[start:start+size]))
                 start, size = int(q.get("X-Plex-Container-Start", 0)), int(q.get("X-Plex-Container-Size", 256))
                 if getattr(lib.options,"partial_scan",False):
                     if start:
                         return self.respond(503)
                     size=2
                 ids = [i for i in range(1, lib.count + 1) if i not in lib.deleted] if lib.deleted else range(1,lib.count+1)
+                if q.get("artist.id") or q.get("album.id"):
+                    field, seed = ("grandparentRatingKey", q["artist.id"]) if "artist.id" in q else ("parentRatingKey", q["album.id"])
+                    ids = [i for i in ids if lib.track(i)[field] == seed]
+                if "track.title" in q:
+                    terms=[t.casefold() for t in parse_qs(url.query)["track.title"]]
+                    def matches(i):
+                        track=lib.track(i)
+                        fields=[track[key].casefold() for key in ("title","parentTitle","grandparentTitle")]
+                        return all(any(term in field for field in fields) for term in terms)
+                    ids=[i for i in ids if matches(i)]
+                field, _, direction = q.get("sort", "").partition(":")
+                fields = {"track.titleSort":"title", "album.titleSort":"parentTitle", "artist.titleSort":"grandparentTitle",
+                          "track.originalTitle":"originalTitle", "track.duration":"duration", "track.index":"index",
+                          "track.parentIndex":"parentIndex", "album.year":"year"}
+                if field == "track.file":
+                    ids = sorted(ids, key=lambda i: lib.track(i)["Media"][0]["Part"][0]["file"], reverse=direction=="desc")
+                if field in fields:
+                    ids = sorted(ids, key=lambda i: lib.track(i)[fields[field]], reverse=direction=="desc")
                 rows = [lib.track(i) for i in ids[start:start+size]]
                 if q.get("excludeElements") == "Media":
                     for row in rows:
@@ -238,6 +260,17 @@ def handler(lib):
                     lib.mix_queue.extend(int(i) for i in source.removeprefix("/library/metadata/").split(","))
                 return self.respond(200,dict(playQueueID=20,Metadata=[lib.track(i) | dict(playQueueItemID=str(j+1))
                     for j,i in enumerate(lib.mix_queue) if i not in lib.deleted]))
+            if path == "/playlists/fixture-ranges/items" and self.command == "GET":
+                start=int(self.headers["X-Plex-Container-Start"])
+                size=int(self.headers["X-Plex-Container-Size"])
+                # The server may cap the page below the requested size and supply its range only in headers.
+                rows=[]
+                for i in range(start,min(137,start+min(size,50))):
+                    t=lib.track(1+i%3) | dict(playlistItemID=str(i+1))
+                    if i==33:t["Media"]=[None,7,*t["Media"]]
+                    rows.append(None if i==60 else t)
+                return self.respond(200,dict(size=len(rows),Metadata=rows),
+                    {"X-Plex-Container-Start":start,"X-Plex-Container-Total-Size":137})
             if path == "/playlists" and self.command == "GET":
                 return self.respond(200, dict(Metadata=[dict(ratingKey=k, title=v[0]) for k, v in lib.playlists.items()]))
             if path.startswith("/playlists"):

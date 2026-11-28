@@ -9,7 +9,7 @@ sealed partial class Session
     async Task BatchFiles(string command)
     {
         if (batchBusy || Api == null || (command == "Delete tracks from server" && !owned)) return;
-        var tracks = Selection().DistinctBy(t => t.Id).ToArray();
+        var tracks = (await SelectedTracks()).DistinctBy(t => t.Id).ToArray();
         if (tracks.Length == 0) return;
         if (tracks.Any(t => t.Id.Length == 0 || t.LibraryId is { Length: > 0 } && t.LibraryId != Scope.Library))
             throw new IOException("Select tracks from the connected music library.");
@@ -152,7 +152,6 @@ sealed partial class Session
             catch (Exception ex) { results.Add($"{plan.Source}   ·   {Message(ex)}"); }
         }
         string scan = "";
-        if (moved.Count > 0) await Task.Run(() => Store.InvalidateMovedPaths(scope, moved));
         if (moved.Count > 0 && Api == api)
         {
             try
@@ -170,8 +169,6 @@ sealed partial class Session
                 if (api == Api)
                 {
                     await Sync();
-                    // A scheduled server scan may still expose the old media paths.
-                    await Task.Run(() => Store.InvalidateMovedPaths(scope, moved));
                 }
                 scan = scanning ? " Plex is still indexing. Sync again when its scan finishes." : " Library refreshed.";
             }

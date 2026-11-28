@@ -5,108 +5,154 @@ using Microsoft.AspNetCore.Http;
 
 namespace Mixamp;
 
-sealed record Request(string Action, string Id = "", string Value = "", string Extra = "", string[]? Ids = null);
+sealed record Request(string Action, string Id = "", string Value = "", string Extra = "", string[]? Ids = null, int Offset = 0, bool Descending = false, CastSong[]? Songs = null, double Seconds = 0);
 
 sealed class MacLibrary : IDisposable
 {
+    readonly CastSession cast=new();
+    string libraryInstance="";
     TrackMetadata? editor;
     string editorId = "";
     readonly Store store;
     readonly Account account;
+    readonly Keychain keychain;
     readonly SemaphoreSlim gate = new(1);
-    readonly string tmp = Directory.CreateTempSubdirectory("mixamp-player-").FullName;
+    sealed record BrowseSession(Plex Server, Scope Scope);
+    volatile BrowseSession? browse;
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string,PlaylistBrowser> playlistViews=new();
     Scope scope;
     Plex? api, candidate;
     JsonNode[] servers = [], sections = [];
     string user = "", machine = "";
     bool owner, candidateOwner;
-    sealed record StreamPart(string Name, Plex Server, string Key, long Size);
+    sealed record StreamPart(string Name, AudioRelay Relay);
     volatile StreamPart? remote;
     sealed record Cover(string Id, Plex Server, string Key);
     volatile Cover? cover;
-    string? mediaKey, mediaPath;
-    string progress = "Ready";
     string planId = "";
     Func<Task>? pending;
     List<RadioOption> radioStations = [];
     List<RadioChoice> radioChoices = [];
     RadioOption? selectedRadio;
     Library Library => new(api ?? throw new IOException("Connect to Plex first."), scope);
-    public string Progress => Volatile.Read(ref progress);
-    public MacLibrary(string directory)
+    public MacLibrary(string directory,bool allowKeychainPrompt)
     {
-        store = new Store(directory);
-        account = new(store, Keychain.Read, Keychain.Write);
+        store = new Store(directory,useCatalog:false);
+        keychain = new(store);
+        account = new(store, () => keychain.Read(allowKeychainPrompt), keychain.Write);
         scope = JsonSerializer.Deserialize<Scope>(store.Get("installation","lastScope") ?? "null") ?? new("","","");
     }
-    async Task Sync()
-    {
-        try
-        {
-            await Library.Sync(store, () => Task.CompletedTask, default, (n,total,diff) =>
-                Volatile.Write(ref progress, $"{(diff ? "Checking for changes" : "Loading library")} · {n:N0} / {Math.Max(n,total):N0}"));
-        }
-        finally { Volatile.Write(ref progress, "Ready"); }
-    }
-    async Task SelectServer(string id)
+    async Task SelectServer(string id,CancellationToken ct)
     {
         var server = servers.Single(s => s.Str("clientIdentifier") == id);
         candidate?.Dispose();
-        candidate = await account.Connect(server,default);
+        candidate = await account.Connect(server,ct);
         machine = id;
         candidateOwner = server["owned"]?.GetValue<bool>() == true;
-        sections = (await candidate.Call("/library/sections")).Items("Directory").Where(l => l.Str("type") == "artist").ToArray();
+        sections = (await candidate.Call("/library/sections",ct:ct)).Items("Directory").Where(l => l.Str("type") == "artist").ToArray();
     }
     void SelectLibrary(string id)
     {
         _ = sections.Single(s => s.Str("key") == id);
         api?.Dispose(); api = candidate; candidate = null;
-        owner = candidateOwner; scope = new(user,machine,id);
-        editor = null; pending = null; mediaKey = null; remote = null; cover = null;
+        owner = candidateOwner; scope = new(user,machine,id); libraryInstance=Guid.NewGuid().ToString("N");
+        playlistViews.Clear();
+        browse = new(api!, scope);
+        editor = null; pending = null; remote?.Relay.Dispose(); remote = null; cover = null;
         radioStations.Clear(); radioChoices.Clear(); selectedRadio = null;
         store.Set("installation","lastScope",JsonSerializer.Serialize(scope));
     }
-    async Task Demo()
+    async Task Demo(CancellationToken ct)
     {
         candidate?.Dispose();
         candidate = new Plex(new Uri("http://127.0.0.1:32491"),account.Identifier,"fixture-only");
-        if ((await candidate.Call("/identity")).Str("machineIdentifier") != "mixamp-demo") throw new IOException("Demo server unavailable.");
-        sections = (await candidate.Call("/library/sections")).Items("Directory").ToArray();
+        if ((await candidate.Call("/identity",ct:ct)).Str("machineIdentifier") != "mixamp-demo") throw new IOException("Demo server unavailable.");
+        sections = (await candidate.Call("/library/sections",ct:ct)).Items("Directory").ToArray();
         machine = "mixamp-demo"; user = "demo"; candidateOwner = true; SelectLibrary("1");
     }
-    public async Task<object> Command(Request r)
+    public async Task<object> Command(Request r,CancellationToken ct)
     {
-        await gate.WaitAsync();
+        // Preferences can be saved while a Plex request is in flight.
+        if (r.Action=="setting")
+        {
+            if (r.Id is not ("eq" or "columns" or "bars" or "theme" or "font" or "glass" or "songSort" or "visualizerBackground")) throw new ArgumentException();
+            if (r.Id=="visualizerBackground" && !VisualizerStyles.All.Contains(r.Value)) throw new ArgumentException("Unknown visualizer.");
+            if (r.Id=="font" && r.Value is not ("ubuntu" or "theme")) throw new ArgumentException("Unknown font.");
+            if (r.Id=="theme" && ThemeCatalog.All.All(t=>t.Name!=r.Value)) throw new ArgumentException("Unknown theme.");
+            store.Set("installation",r.Id,r.Value); return true;
+        }
+        if (r.Action=="castDevices")
+        {
+            var instance=libraryInstance;
+            return new {instance,devices=await cast.Discover()};
+        }
+        if (r.Action=="castControl")await cast.Control(r.Id);
+        if (r.Action is "castControl" or "castState")
+            return new {device=cast.DeviceName,playing=cast.Playing,song=cast.CurrentSong,seconds=cast.Position};
+        if (r.Action=="soundOutput")
+        {
+            using var settings=System.Diagnostics.Process.Start("/usr/bin/open","x-apple.systempreferences:com.apple.Sound-Settings.extension");
+            return true;
+        }
+        if (r.Action == "eq") return ToneProfile.Choose(r.Value,r.Extra);
+        if (r.Action is "songs" or "playlists" or "playlist" or "openPlaylist" or "closePlaylist")
+        {
+            var session = browse ?? throw new IOException("Connect to Plex first.");
+            var library = new Library(session.Server,session.Scope);
+            if(r.Action=="openPlaylist"){
+                var view=Guid.NewGuid().ToString("N");
+                playlistViews[view]=new(library,r.Id); return view;
+            }
+            if(r.Action=="closePlaylist")return playlistViews.TryRemove(r.Id,out _);
+            if(r.Action=="playlist"){
+                if(!playlistViews.TryGetValue(r.Id,out var view))throw new IOException("Reopen the playlist to continue.");
+                return await view.Read(r.Offset,r.Value,r.Extra,r.Descending,ct);
+            }
+            if (r.Action == "playlists")
+                return (await library.Playlists(ct)).Select(p => new { id=p.Str("ratingKey"), name=p.Str("title") });
+            var page = await library.Songs(r.Offset,r.Id,r.Extra=="-1",r.Value,ct);
+            if (r.Offset == 0 && string.IsNullOrWhiteSpace(r.Value) && browse == session && !ct.IsCancellationRequested)
+                store.SaveLaunchSongs(session.Scope,r.Id,r.Extra=="-1",page);
+            return page;
+        }
+        await gate.WaitAsync(ct);
         try
         {
+            if(r.Action is "library" or "demo" or "reconnect")await cast.Control("stop");
             switch(r.Action)
             {
-                case "cached": return store.Search(scope, limit:-1);
+                case "castStart":
+                    var castLibrary=browse ?? throw new IOException("Connect to Plex first.");
+                    if(libraryInstance!=r.Extra)throw new IOException("The library changed. Choose the speaker again.");
+                    await cast.Start(r.Id,castLibrary.Server,castLibrary.Scope,r.Songs ?? [],r.Seconds);
+                    return cast.DeviceName!;
                 case "resume":
+                case "reconnect":
                     if (scope.Library == "") return false;
-                    if (scope.Account == "demo" && scope.Server == "mixamp-demo") await Demo();
+                    if (scope.Account == "demo" && scope.Server == "mixamp-demo") await Demo(ct);
                     else
                     {
-                        var discovery = await account.Discover(default,false);
-                        if (discovery.AccountId != scope.Account) throw new IOException("Reconnect to the saved account.");
+                        (string AccountId, JsonNode[] Servers) discovery;
+                        try { discovery = await account.Discover(ct,r.Action=="reconnect"); }
+                        catch (PlexSignInRequired) when (r.Action=="resume") { return new { needsSignIn=true }; }
+                        if (discovery.AccountId != scope.Account) throw new IOException("This account differs from the saved library’s account. Choose Add Plex Library to switch libraries.");
                         user = discovery.AccountId; servers = discovery.Servers;
-                        await SelectServer(scope.Server); SelectLibrary(scope.Library);
+                        await SelectServer(scope.Server,ct); SelectLibrary(scope.Library);
                     }
-                    await Sync(); return true;
+                    return new { warning=keychain.SaveWarning };
                 case "connect":
-                    (user,servers) = await account.Discover(default);
+                    (user,servers) = await account.Discover(ct,freshLogin:r.Value=="fresh");
                     return servers.Select(s => new { id=s.Str("clientIdentifier"), name=s.Str("name") });
                 case "server":
-                    await SelectServer(r.Id); return sections.Select(s => new { id=s.Str("key"), name=s.Str("title") });
-                case "library": SelectLibrary(r.Id); await Sync(); return true;
-                case "demo": await Demo(); await Sync(); return true;
-                case "sync": await Sync(); return true;
+                    await SelectServer(r.Id,ct); return sections.Select(s => new { id=s.Str("key"), name=s.Str("title") });
+                case "library": SelectLibrary(r.Id); return new { warning=keychain.SaveWarning };
+                case "demo": await Demo(ct); return true;
                 case "stations":
                     radioStations = await Library.RadioStations();
                     return radioStations;
                 case "radioChoices":
                     selectedRadio = radioStations[int.Parse(r.Id)];
-                    radioChoices = await Library.RadioChoices(selectedRadio,store);
+                    radioChoices = await Library.RadioChoices(selectedRadio,null);
                     return radioChoices;
                 case "metadata":
                     editor = await TrackMetadata.Open(api ?? throw new IOException("Connect to Plex first."),scope,r.Ids ?? []);
@@ -116,24 +162,20 @@ sealed class MacLibrary : IDisposable
                 case "saveMetadata":
                     if (editor == null || editorId != r.Id) throw new IOException("Reopen the metadata editor.");
                     var patch = JsonSerializer.Deserialize<Dictionary<string,string>>(r.Value) ?? throw new IOException("Missing metadata.");
-                    try { await editor.Save(store,patch); } finally { await Sync(); }
+                    await editor.Save(store,patch);
                     return true;
                 case "sonic":
-                    var similar = await Library.StartRadio(new("sonic","","Sonic radio"),[r.Id],store);
+                    var similar = await Library.StartRadio(new("sonic","","Sonic radio"),[r.Id],null);
                     return new { id=similar.Str("playQueueID"), tracks=similar.Items("Metadata").Select(Track.Read).ToList() };
                 case "startRadio":
                     var station = radioStations[int.Parse(r.Id)];
                     var choices = r.Ids ?? [];
                     if (station.Kind != "station" && (station != selectedRadio || choices.Except(radioChoices.Select(c=>c.Id)).Any()))
                         throw new IOException("Reopen this station and choose again.");
-                    var radio = await Library.StartRadio(station,choices,store);
+                    var radio = await Library.StartRadio(station,choices,null);
                     return new { id=radio.Str("playQueueID"), tracks=radio.Items("Metadata").Select(Track.Read).ToList() };
-                case "continueSonic":
-                    return (await Library.ContinueSonic(r.Id,r.Value,r.Extra,r.Ids??[])).Items("Metadata").Select(Track.Read).ToList();
                 case "continueRadio":
                     return (await Library.ContinueQueue(r.Id,r.Value)).Items("Metadata").Select(Track.Read).ToList();
-                case "playlists": return (await Library.Playlists()).Select(p => new { id=p.Str("ratingKey"), name=p.Str("title") });
-                case "playlist": return (await Library.PlaylistItems(r.Id)).Items("Metadata").Select(Track.Read);
                 case "newList": return (await Library.CreatePlaylist(Required(r.Value))).Items("Metadata").Single().Str("ratingKey");
                 case "removeList": await Library.DeletePlaylist(r.Id); return true;
                 case "addList":
@@ -148,18 +190,18 @@ sealed class MacLibrary : IDisposable
                     var cueTrack=await Fresh(r.Id);
                     var cue=r.Value==""&&r.Extra=="" ? new Cue() : new Cue(r.Value==""?null:Cue.Parse(r.Value),r.Extra==""?null:Cue.Parse(r.Extra));
                     cue.Validate(cueTrack.Duration);
-                    var saved=store.ReadCue(scope,cueTrack);
+                    var saved=await Library.PlaybackCue(store,cueTrack);
                     if(saved!=cue)
                     {
                         store.Remember(scope,Guid.NewGuid().ToString(),"Edit playback range",new(cueTrack,"Cue","","",JsonSerializer.Serialize(saved),JsonSerializer.Serialize(cue)));
                         store.SaveCue(scope,cueTrack,cue);
                     }
                     return true;
-                case "readCue": return store.ReadCue(scope,await Fresh(r.Id));
+                case "readCue": return await Library.PlaybackCue(store,await Fresh(r.Id));
                 case "editFile":
                     var edited=await Fresh(r.Id);
                     await WriteFileTags(edited,new(){{r.Value,r.Extra}},Guid.NewGuid().ToString());
-                    await Sync();return true;
+                    return true;
                 case "saveFileMetadata":
                     if(editor==null || editorId!=r.Id)throw new IOException("Reopen the editor.");
                     var tags=JsonSerializer.Deserialize<Dictionary<string,string>>(r.Value) ?? throw new IOException("Missing file tags.");
@@ -176,50 +218,32 @@ sealed class MacLibrary : IDisposable
                         }
                     }
                     catch(Exception ex){throw new IOException($"{written} files updated. {ex.Message}",ex);}
-                    finally {await Sync();}
                     return true;
                 case "title":
                     var song=await Fresh(r.Id); var title=Required(r.Value);
                     store.Remember(scope,Guid.NewGuid().ToString(),"Rename track",new(song,"Title","","",song.Title,title));
-                    await api!.SetFields(scope.Library,song,new(){["title"]=title}); await Sync(); return true;
+                    await api!.SetFields(scope.Library,song,new(){["title"]=title}); return true;
                 case "prepare":
-                    var track=await Fresh(r.Id);
+                    var track=await Fresh(r.Id,ct);
                     if (track.Parts.Length != 1) throw new IOException("Select a single-version track.");
                     var part = track.Parts[0];
+                    if (string.IsNullOrEmpty(part.Key)) throw new IOException("Plex did not supply a playable media part.");
                     string extension = Path.GetExtension(part.File);
+                    if (string.IsNullOrEmpty(extension)) extension = "." + part.Container;
                     if (extension.Length > 8 || extension.Any(c => c!='.' && !char.IsAsciiLetterOrDigit(c))) extension=".audio";
-                    try
-                    {
-                        var probe = await api!.Range(part.Key,0,1,null,default);
-                        remote = new(Guid.NewGuid().ToString("N")+extension,api,part.Key,probe.Size);
-                        return Prepared(track,remote.Name);
-                    }
-                    catch (Exception ex) when (ex is IOException or HttpRequestException) { remote=null; }
-                    // A server without byte ranges needs a seekable local original for WebKit.
-                    var key=scope.Key+track.Identity+track.Id;
-                    if (mediaKey != key)
-                    {
-                        var ext=Path.GetExtension(track.FilePath);
-                        if (ext.Length > 8 || ext.Any(c => c!='.' && !char.IsAsciiLetterOrDigit(c))) ext=".audio";
-                        var path=Path.Combine(tmp,Guid.NewGuid().ToString("N")+ext);
-                        try
-                        {
-                            await using (var f=File.Create(path)) await api!.CopyOriginal(track.Parts[0].Key,f,default);
-                            var old=mediaPath; mediaPath=path; mediaKey=key;
-                            if (old != null) File.Delete(old);
-                        }
-                        catch { if(mediaPath != path) File.Delete(path); throw; }
-                    }
-                    return Prepared(track,Path.GetFileName(mediaPath)!);
-                case "eq": return ToneProfile.Choose(r.Value,r.Extra);
+                    var playCue=await Library.PlaybackCue(store,track,ct);
+                    ct.ThrowIfCancellationRequested();
+                    var name = Guid.NewGuid().ToString("N")+extension;
+                    remote?.Relay.Dispose();
+                    remote = new(name,new AudioRelay(api!,part.Key,part.Size,name));
+                    if (track.Thumb.Length == 0) cover = null;
+                    else if (cover?.Key != track.Thumb) cover = new(Guid.NewGuid().ToString("N"),api!,track.Thumb);
+                    return new { url="/audio/"+remote.Name, cue=playCue, track, artwork=cover == null ? null : "/artwork/"+cover.Id };
+                case "launchSongs": return (object?)store.ReadLaunchSongs(scope,r.Id,r.Extra=="-1") ?? false;
                 case "config": return new { eq=store.Get("installation","eq") ?? "Auto", columns=store.Get("installation","columns"),bars=store.Get("installation","bars") != "off",
-                    themes=ThemeCatalog.All, theme=ThemeCatalog.Resolve(store.Get("installation","theme")).Name,
+                    visualizerStyles=VisualizerStyles.All, visualizerBackground=VisualizerStyles.Resolve(store.Get("installation","visualizerBackground")),
+                    songSort=store.Get("installation","songSort"), themes=ThemeCatalog.All, theme=ThemeCatalog.Resolve(store.Get("installation","theme")).Name,
                     glass=store.Get("installation","glass")=="on", ubuntuFont=store.Get("installation","font") == "ubuntu" };
-                case "setting":
-                    if (r.Id is not ("eq" or "columns" or "bars" or "theme" or "font" or "glass")) throw new ArgumentException();
-                    if (r.Id=="font" && r.Value is not ("ubuntu" or "theme")) throw new ArgumentException("Unknown font.");
-                    if (r.Id=="theme" && ThemeCatalog.All.All(t=>t.Name!=r.Value)) throw new ArgumentException("Unknown theme.");
-                    store.Set("installation",r.Id,r.Value); return true;
                 case "review": return await Review(r);
                 case "history": return new { undo=store.HistoryName(scope,false), redo=store.HistoryName(scope,true) };
                 case "apply":
@@ -256,13 +280,6 @@ sealed class MacLibrary : IDisposable
         await api!.Call("/library/metadata/"+Plex.E(edited.Id)+"/refresh",HttpMethod.Put);
     }
     static string Required(string s) => !string.IsNullOrWhiteSpace(s) ? s.Trim() : throw new IOException("Enter a value.");
-    object Prepared(Track track,string audioName)
-    {
-        if (track.Thumb.Length == 0) cover = null;
-        else if (cover?.Key != track.Thumb) cover = new(Guid.NewGuid().ToString("N"),api!,track.Thumb);
-        return new { url="/audio/"+audioName, cue=store.ReadCue(scope,track), track,
-            artwork=cover == null ? null : "/artwork/"+cover.Id };
-    }
     public async Task<IResult> Artwork(string id,CancellationToken ct)
     {
         var current = cover;
@@ -283,9 +300,9 @@ sealed class MacLibrary : IDisposable
         catch (Exception ex) when (ex is IOException or HttpRequestException or ObjectDisposedException or OperationCanceledException)
         { return Results.NotFound(); }
     }
-    async Task<Track> Fresh(string id)
+    async Task<Track> Fresh(string id,CancellationToken ct=default)
     {
-        var t=await (api ?? throw new IOException("Connect to Plex first.")).Fresh(id);
+        var t=await (api ?? throw new IOException("Connect to Plex first.")).Fresh(id,ct);
         if (t.LibraryId != scope.Library) throw new IOException("Select a track in the connected library.");
         return t;
     }
@@ -330,8 +347,7 @@ sealed class MacLibrary : IDisposable
             List<DeletionReview> reviews=[];
             foreach(var id in ids) reviews.Add(await deletion.Review(id));
             return Plan("Permanently delete selected tracks?",reviews.SelectMany(d=>d.Track.Parts.Select(p=>p.File)).ToList(),async()=>{
-                try { foreach(var d in reviews) if(!await deletion.Commit(d)) throw new IOException("Plex still reports the track."); }
-                finally { await Sync(); }
+                foreach(var d in reviews) if(!await deletion.Commit(d)) throw new IOException("Plex still reports the track.");
             });
         }
         if(r.Id is not ("rename" or "organize")) throw new ArgumentException();
@@ -379,16 +395,10 @@ sealed class MacLibrary : IDisposable
                     catch { if(File.Exists(m.Source))store.Forget(scope,entry); throw; }
                 }
             }
-            finally { await Rescan(moves.Select(m=>m.Track).ToArray()); }
+            finally { await Rescan(); }
         });
     }
-    async Task Rescan(Track[] tracks)
-    {
-        store.InvalidateMovedPaths(scope,tracks);
-        await api!.Call("/library/sections/"+Plex.E(scope.Library)+"/refresh");
-        await Sync();
-        store.InvalidateMovedPaths(scope,tracks);
-    }
+    Task Rescan() => api!.Call("/library/sections/"+Plex.E(scope.Library)+"/refresh");
     object ReviewHistory(bool redo)
     {
         var steps=store.LastChanges(scope, redo);
@@ -413,7 +423,7 @@ sealed class MacLibrary : IDisposable
                 {
                     var previous=JsonSerializer.Deserialize<Cue>(c.Before)!;
                     var next=JsonSerializer.Deserialize<Cue>(c.After)!;
-                    var actual=store.ReadCue(scope,c.Track);
+                    var actual=await Library.PlaybackCue(store,c.Track);
                     if(actual!=previous && actual!=next)throw new IOException("Playback range changed after this edit.");
                     store.SaveCue(scope,c.Track,previous);
                 }
@@ -442,18 +452,14 @@ sealed class MacLibrary : IDisposable
                 else throw new IOException("Unknown undo operation.");
                 store.CompleteChange(scope,s,redo);
             }
-            if(steps.Any(s=>s.Change.Type is "Move" or "Tags")) await Rescan(steps.Select(s=>s.Change.Track).ToArray()); else await Sync();
+            if(steps.Any(s=>s.Change.Type is "Move" or "Tags")) await Rescan();
         });
     }
-    public IResult Audio(string name)
+    public async Task Audio(string name,HttpContext context)
     {
         var stream=remote;
-        var path=mediaPath;
-        var type=Path.GetExtension(name).ToLowerInvariant() switch { ".mp3"=>"audio/mpeg",".flac"=>"audio/flac",".wav"=>"audio/wav",".m4a" or ".mp4"=>"audio/mp4",".aac"=>"audio/aac",".ogg"=>"audio/ogg",_=>"application/octet-stream" };
-        if (stream != null && name == stream.Name)
-            return Results.Stream(new RangeStream(stream.Server,stream.Key,stream.Size),type,enableRangeProcessing:true);
-        if(path==null||Path.GetFileName(path)!=name) return Results.NotFound();
-        return Results.File(path,type,enableRangeProcessing:true);
+        if (stream == null || name != stream.Name) { context.Response.StatusCode=404; return; }
+        await stream.Relay.Send(context);
     }
-    public void Dispose(){api?.Dispose();candidate?.Dispose();Directory.Delete(tmp,true);}
+    public void Dispose(){Task.Run(()=>cast.Control("stop")).GetAwaiter().GetResult();remote?.Relay.Dispose();api?.Dispose();candidate?.Dispose();}
 }

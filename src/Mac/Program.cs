@@ -21,9 +21,9 @@ internal static class Program
         bool checkWindow = args is ["--check-window", _];
         string profile = fixture || checkWindow ? args[1] : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             "Library","Application Support","Mixamp");
-        using var library = new MacLibrary(profile);
+        using var library = new MacLibrary(profile,allowKeychainPrompt:!fixture && !checkWindow);
         string root = Path.Combine(AppContext.BaseDirectory,"wwwroot");
-        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { ContentRootPath=AppContext.BaseDirectory,WebRootPath=root });
+        var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { ContentRootPath=AppContext.BaseDirectory,WebRootPath=root });
         builder.Logging.ClearProviders();
         builder.WebHost.UseKestrel(o=>o.Listen(IPAddress.Loopback,0));
         var web = builder.Build();
@@ -46,16 +46,29 @@ internal static class Program
             await next();
         });
         web.UseDefaultFiles();web.UseStaticFiles();
-        web.MapGet("/progress",()=>Results.Text(library.Progress));
-        web.MapGet("/audio/{name}",(string name)=>library.Audio(name));
+        web.MapMethods("/audio/{name}",["GET","HEAD"],(string name,HttpContext ctx)=>library.Audio(name,ctx));
         web.MapGet("/artwork/{id}",(string id, CancellationToken ct)=>library.Artwork(id,ct));
-        web.MapPost("/command",async (Request r)=>
+        web.MapPost("/command",async (Request r,CancellationToken requestAborted)=>
         {
             try
             {
-                var result = await library.Command(r);
+                using var stopped=CancellationTokenSource.CreateLinkedTokenSource(requestAborted,web.Lifetime.ApplicationStopping);
+                var result = await library.Command(r,stopped.Token);
                 if (checkWindow && r.Action == "resume") Console.WriteLine("Library window initialized");
                 return Results.Json(result);
+            }
+            catch(OperationCanceledException) when(requestAborted.IsCancellationRequested || web.Lifetime.ApplicationStopping.IsCancellationRequested)
+            { return Results.StatusCode(499); }
+            catch(OperationCanceledException) {return Results.Json(new {error="Plex timed out."},statusCode:504);}
+            catch(Exception ex) when(r.Action is "songs" or "playlist")
+            {
+                var reason=ex switch {
+                    HttpRequestException { StatusCode: {} code } => $"Plex returned HTTP {(int)code}.",
+                    HttpRequestException => "The connection to Plex was interrupted.",
+                    IOException => ex.Message,
+                    _ => "Mixamp could not read the track list returned by Plex."
+                };
+                return Results.Json(new {error=reason},statusCode:502);
             }
             catch(Exception ex){return Results.BadRequest(new {error=ex is IOException or ArgumentException or TimeoutException ? ex.Message :
                 ex is HttpRequestException h ? $"Plex connection failed ({h.StatusCode})." : "Operation failed. Check the library and try again."});}
@@ -70,6 +83,7 @@ internal static class Program
             window.RegisterWebMessageReceivedHandler((_,message) =>
             {
                 if (!OperatingSystem.IsMacOS()) return;
+                if (message.StartsWith("playback-glass:",StringComparison.Ordinal)) {window.Invoke(()=>MacTitleBar.LayoutPlaybackGlass(message[15..]));return;}
                 if (message.StartsWith("menus:",StringComparison.Ordinal)) {window.Invoke(()=>MacTitleBar.InstallMenus(window,message[6..]));return;}
                 if (message.StartsWith("checks:",StringComparison.Ordinal)) {window.Invoke(()=>{
                     MacTitleBar.MenuChecks(message[7..]);
@@ -86,7 +100,7 @@ internal static class Program
                 if (theme != null) window.Invoke(() =>
                 {
                     bool applied=MacTitleBar.Apply(theme,glass,webReduced,checkWindow,out bool active);
-                    window.SendWebMessage(active?"glass-active:on":"glass-active:off");
+                    window.SendWebMessage(MacTitleBar.HasPlaybackGlass?"glass-active:liquid":active?"glass-active:on":"glass-active:off");
                     if (applied && checkWindow)
                     {
                         Console.WriteLine("Window theme applied");
