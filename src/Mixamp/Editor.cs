@@ -316,6 +316,7 @@ sealed class Editor : Window
     {
         if (saving)
             return;
+        var edits = fields.Where(f => f.Value.IsEnabled && f.Value.Text != f.Initial).ToList();
         saving = true;
         save.IsEnabled = false;
         tabs.IsEnabled = false;
@@ -335,7 +336,6 @@ sealed class Editor : Window
                 result.Text = "Playback range saved. Applies in Mixamp.";
                 return;
             }
-            var edits = fields.Where(f => f.Value.IsEnabled && f.Value.Text != f.Initial).ToList();
             if (edits.Count == 0)
             {
                 result.Text = "No fields changed.";
