@@ -382,7 +382,7 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
-            File.WriteAllText(Path.Combine(destination, "failure.txt"), Session.Message(ex));
+            File.WriteAllText(Path.Combine(destination, "failure.txt"), ex.ToString());
             Application.Current.Shutdown(1);
         }
     }

@@ -23,9 +23,7 @@ try {
         Start-Sleep -Milliseconds 200
     }
     if (!$ready -or $server.HasExited) { throw 'Demo did not become ready.' }
-    $arguments = @('--mock')
-    if ($Benchmark) { $arguments += @('--benchmark', (Join-Path $out 'store-benchmark.json')) }
-    dotnet tests/bin/Release/net10.0/Checks.dll @arguments
+    dotnet tests/bin/Release/net10.0/Checks.dll --mock
     & $python.Source tools/scenarios.py
     $folder = Join-Path $out $PackageFolder
     $payload = Join-Path $folder 'app'
@@ -48,7 +46,14 @@ try {
         $shots = Join-Path $out 'screenshots/themes'
         $app = Start-Process (Join-Path $folder 'Mixamp.exe') -ArgumentList "--smoke-demo `"$shots`"" -PassThru
         if (!$app.WaitForExit(90000)) { $app.Kill(); throw 'Packaged WPF smoke test timed out.' }
-        if ($app.ExitCode -ne 0 -or @(Get-ChildItem "$shots/*.png").Count -lt 6) { throw 'Packaged WPF smoke test failed.' }
+        if ($app.ExitCode -ne 0 -or @(Get-ChildItem "$shots/*.png").Count -lt 9) {
+            $failure = Join-Path $shots 'failure.txt'
+            if (Test-Path $failure) { throw (Get-Content -Raw $failure) }
+            throw "Packaged WPF smoke test failed (exit $($app.ExitCode))."
+        }
+    }
+    if ($Benchmark) {
+        dotnet tests/bin/Release/net10.0/Checks.dll --benchmark (Join-Path $out 'store-benchmark.json')
     }
     $zip = Join-Path $out 'Mixamp-win-x64.zip'
     $pendingZip = "$zip.$([guid]::NewGuid()).tmp"
